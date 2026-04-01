@@ -312,6 +312,8 @@ The plugin exposes an [MCP](https://modelcontextprotocol.io/) server at `/api/ai
 - Tool names are converted from camelCase to snake_case (`listContentTypes` -> `list_content_types`)
 - Each tool includes a `title` (e.g. "Strapi: Search Content") and `annotations` (`readOnlyHint`, `destructiveHint`) for better client integration
 - All tool schemas include `additionalProperties: false` to ensure compatibility with `mcp-remote` and Claude Desktop
+- Custom Zod-to-JSON Schema converter that supports both Zod 3 and Zod 4, producing complete type information (types, descriptions, defaults, enums, constraints) for every parameter
+- MCP arguments are coerced through the Zod schema before execution — stringified JSON values (e.g. `fields: '["title"]'`) are automatically parsed to their expected types, and defaults are applied for omitted optional parameters
 - The server returns dynamic `instructions` during initialization so clients know when to load tools — plugins that provide `getMeta()` get keyword-driven entries (e.g. `/youtube`, `/octalens`), others get auto-generated summaries
 - Sessions expire after the configured timeout (default: 4 hours)
 - Maximum concurrent sessions can be configured (default: 100)

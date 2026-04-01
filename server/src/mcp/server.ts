@@ -103,7 +103,7 @@ function buildInstructions(registry: ToolRegistry): string {
 }
 
 // ---------------------------------------------------------------------------
-// Zod → JSON Schema conversion
+// Zod → JSON Schema conversion (supports both Zod 3 and Zod 4)
 // ---------------------------------------------------------------------------
 
 interface JsonSchemaProperty {
@@ -128,11 +128,29 @@ interface JsonSchema {
 }
 
 /**
+ * Get the Zod type identifier, supporting both Zod 3 (typeName) and Zod 4 (type).
+ */
+function getZodType(field: any): string | undefined {
+  const def = field?._def;
+  if (!def) return undefined;
+  // Zod 3 uses _def.typeName (e.g. "ZodString"), Zod 4 uses _def.type (e.g. "string")
+  return def.typeName ?? def.type;
+}
+
+/**
+ * Get the description from a Zod field.
+ * Zod 3: _def.description; Zod 4: field.description
+ */
+function getDescription(field: any): string | undefined {
+  return field?.description ?? field?._def?.description;
+}
+
+/**
  * Convert a Zod schema to a JSON Schema object with additionalProperties: false.
  *
- * This replaces the McpServer's internal Zod→JSON Schema conversion which
- * varies between Zod 3 and Zod 4, causing tools to be silently dropped
- * by mcp-remote when additionalProperties is missing.
+ * Handles both Zod 3 and Zod 4 field definitions to ensure all tools
+ * produce complete JSON Schema with proper types, descriptions, and
+ * additionalProperties: false for mcp-remote/Claude Desktop compatibility.
  */
 function zodToInputSchema(schema: ToolDefinition['schema']): JsonSchema {
   const shape = schema.shape;
@@ -143,7 +161,6 @@ function zodToInputSchema(schema: ToolDefinition['schema']): JsonSchema {
     const prop = zodFieldToJsonSchema(fieldDef as any);
     properties[key] = prop;
 
-    // Check if the field is required (not optional, not defaulted)
     if (!isOptionalOrDefaulted(fieldDef as any)) {
       required.push(key);
     }
@@ -165,37 +182,47 @@ function zodToInputSchema(schema: ToolDefinition['schema']): JsonSchema {
 /** Check if a Zod field is optional or has a default */
 function isOptionalOrDefaulted(field: any): boolean {
   if (!field) return true;
-
-  // Zod 3 and 4 both expose _def
-  const def = field._def;
-  if (!def) return false;
-
-  const typeName = def.typeName;
-  if (typeName === 'ZodOptional' || typeName === 'ZodDefault') return true;
-
+  const t = getZodType(field);
+  if (!t) return false;
+  const normalized = normalizeType(t);
+  if (normalized === 'optional' || normalized === 'default') return true;
   // Walk through wrapping types
-  if (def.innerType) return isOptionalOrDefaulted(def.innerType);
+  if (field._def?.innerType) return isOptionalOrDefaulted(field._def.innerType);
   return false;
+}
+
+/** Normalize Zod 3 "ZodString" → "string" and Zod 4 "string" → "string" */
+function normalizeType(t: string): string {
+  // Zod 3: "ZodString" → "string", "ZodOptional" → "optional", etc.
+  if (t.startsWith('Zod')) return t.slice(3).toLowerCase();
+  return t.toLowerCase();
 }
 
 /** Convert a single Zod field to a JSON Schema property */
 function zodFieldToJsonSchema(field: any): JsonSchemaProperty {
-  if (!field?._def) return {};
+  const rawType = getZodType(field);
+  if (!rawType) return {};
 
+  const t = normalizeType(rawType);
   const def = field._def;
-  const typeName = def.typeName;
   const prop: JsonSchemaProperty = {};
 
-  // Extract description from any level
-  if (def.description) prop.description = def.description;
+  const desc = getDescription(field);
+  if (desc) prop.description = desc;
 
-  switch (typeName) {
-    case 'ZodString':
+  switch (t) {
+    case 'string':
       prop.type = 'string';
       break;
-    case 'ZodNumber':
+
+    case 'number': {
       prop.type = 'number';
-      if (def.checks) {
+      // Zod 4: field.isInt, field.minValue, field.maxValue
+      if (field.isInt) prop.type = 'integer';
+      if (typeof field.minValue === 'number' && field.minValue > -Number.MAX_SAFE_INTEGER) prop.minimum = field.minValue;
+      if (typeof field.maxValue === 'number' && field.maxValue < Number.MAX_SAFE_INTEGER) prop.maximum = field.maxValue;
+      // Zod 3: _def.checks array
+      if (def.checks && Array.isArray(def.checks)) {
         for (const check of def.checks) {
           if (check.kind === 'min') prop.minimum = check.value;
           if (check.kind === 'max') prop.maximum = check.value;
@@ -203,20 +230,37 @@ function zodFieldToJsonSchema(field: any): JsonSchemaProperty {
         }
       }
       break;
-    case 'ZodBoolean':
+    }
+
+    case 'boolean':
       prop.type = 'boolean';
       break;
-    case 'ZodEnum':
+
+    case 'enum': {
       prop.type = 'string';
-      prop.enum = def.values;
-      break;
-    case 'ZodArray':
-      prop.type = 'array';
-      if (def.type) {
-        prop.items = zodFieldToJsonSchema(def.type);
+      // Zod 3: _def.values (array); Zod 4: _def.entries (object) or field.options (array)
+      if (Array.isArray(def.values)) {
+        prop.enum = def.values;
+      } else if (def.entries) {
+        prop.enum = Object.keys(def.entries);
+      } else if (Array.isArray(field.options)) {
+        prop.enum = field.options;
       }
       break;
-    case 'ZodObject':
+    }
+
+    case 'array': {
+      prop.type = 'array';
+      // Zod 3: _def.type; Zod 4: _def.element
+      const itemType = def.element ?? def.type;
+      if (itemType) {
+        const itemSchema = zodFieldToJsonSchema(itemType);
+        prop.items = Object.keys(itemSchema).length > 0 ? itemSchema : { type: 'string' };
+      }
+      break;
+    }
+
+    case 'object': {
       prop.type = 'object';
       if (field.shape) {
         const nested: Record<string, JsonSchemaProperty> = {};
@@ -227,34 +271,114 @@ function zodFieldToJsonSchema(field: any): JsonSchemaProperty {
         prop.additionalProperties = false;
       }
       break;
-    case 'ZodOptional':
-      return { ...zodFieldToJsonSchema(def.innerType), ...(def.description ? { description: def.description } : {}) };
-    case 'ZodDefault':
-      return {
-        ...zodFieldToJsonSchema(def.innerType),
-        default: def.defaultValue(),
-        ...(def.description ? { description: def.description } : {}),
-      };
-    case 'ZodEffects':
+    }
+
+    case 'optional': {
+      const inner = zodFieldToJsonSchema(def.innerType);
+      if (desc) inner.description = desc;
+      return inner;
+    }
+
+    case 'default': {
+      const inner = zodFieldToJsonSchema(def.innerType);
+      // Zod 3: defaultValue is a function; Zod 4: defaultValue is the raw value
+      const dv = typeof def.defaultValue === 'function' ? def.defaultValue() : def.defaultValue;
+      if (dv !== undefined) inner.default = dv;
+      if (desc) inner.description = desc;
+      return inner;
+    }
+
+    case 'effects':
       // .transform(), .refine(), .pipe() — unwrap
-      return zodFieldToJsonSchema(def.schema);
-    case 'ZodNullable':
+      return zodFieldToJsonSchema(def.schema ?? def.innerType);
+
+    case 'nullable':
       return zodFieldToJsonSchema(def.innerType);
-    case 'ZodUnion':
-      // Simple union — just use the first option for schema hint
-      if (def.options?.length) {
-        return zodFieldToJsonSchema(def.options[0]);
+
+    case 'union': {
+      // Zod 3: _def.options; Zod 4: _def.options
+      const options = def.options;
+      if (Array.isArray(options) && options.length > 0) {
+        return zodFieldToJsonSchema(options[0]);
       }
       break;
-    case 'ZodRecord':
+    }
+
+    case 'record':
       prop.type = 'object';
       break;
-    case 'ZodAny':
-      // No type constraint
+
+    case 'literal':
+      // Extract the literal value
+      if (def.value !== undefined) {
+        prop.type = typeof def.value;
+        prop.enum = [def.value];
+      }
+      break;
+
+    case 'any':
+    case 'unknown':
       break;
   }
 
   return prop;
+}
+
+// ---------------------------------------------------------------------------
+// MCP argument coercion
+// ---------------------------------------------------------------------------
+
+/**
+ * Pre-process MCP arguments before Zod validation.
+ *
+ * MCP clients (especially via mcp-remote) may send JSON-encoded strings
+ * for complex types — e.g. fields: '["title","slug"]' instead of an actual
+ * array. This function detects such cases by inspecting the Zod schema's
+ * expected type and parsing stringified JSON values into their proper types.
+ *
+ * This is the MCP boundary layer — tool logic should never need to worry
+ * about string-vs-parsed arguments.
+ */
+function coerceArgs(args: Record<string, unknown>, schema: ToolDefinition['schema']): Record<string, unknown> {
+  const shape = schema.shape;
+  const result = { ...args };
+
+  for (const [key, value] of Object.entries(result)) {
+    if (typeof value !== 'string') continue;
+
+    const fieldDef = (shape as Record<string, any>)[key];
+    if (!fieldDef) continue;
+
+    const expectedType = resolveBaseType(fieldDef);
+
+    // If the schema expects an object or array but got a string, try JSON.parse
+    if (expectedType === 'object' || expectedType === 'array') {
+      try {
+        const parsed = JSON.parse(value);
+        if (typeof parsed === 'object' && parsed !== null) {
+          result[key] = parsed;
+        }
+      } catch {
+        // Not valid JSON — leave as-is, Zod will handle the error
+      }
+    }
+  }
+
+  return result;
+}
+
+/** Walk through optional/default wrappers to find the base Zod type */
+function resolveBaseType(field: any): string | undefined {
+  const rawType = getZodType(field);
+  if (!rawType) return undefined;
+  const t = normalizeType(rawType);
+
+  if ((t === 'optional' || t === 'default' || t === 'nullable') && field._def?.innerType) {
+    return resolveBaseType(field._def.innerType);
+  }
+
+  if (t === 'record') return 'object';
+  return t;
 }
 
 // ---------------------------------------------------------------------------
@@ -341,7 +465,13 @@ export function createMcpServer(strapi: Core.Strapi): Server {
     }
 
     try {
-      const result = await def.execute(args ?? {}, strapi);
+      // Coerce MCP args through the Zod schema before executing.
+      // MCP clients may send JSON strings for objects/arrays (e.g. fields: "[\"title\"]"
+      // instead of fields: ["title"]). Pre-parse stringified JSON values, then let
+      // Zod validate and coerce the rest (defaults, type casting, etc.).
+      const coerced = coerceArgs(args ?? {}, def.schema);
+      const validated = def.schema.parse(coerced);
+      const result = await def.execute(validated, strapi);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
