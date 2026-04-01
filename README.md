@@ -302,18 +302,52 @@ Additionally, the AI SDK automatically discovers tools from other installed plug
 
 ## MCP Server
 
-The plugin exposes an [MCP](https://modelcontextprotocol.io/) server at `/api/ai-sdk/mcp` that lets external AI clients call the public tools directly.
+The plugin exposes an [MCP](https://modelcontextprotocol.io/) server at `/api/ai-sdk/mcp` that lets external AI clients (Claude Desktop, Claude Code, Cursor, Windsurf, etc.) call the public tools directly.
 
 ### How It Works
 
+- Uses the low-level MCP `Server` class for full control over JSON Schema output, ensuring compatibility with `mcp-remote` and all MCP clients regardless of Zod version
+- Uses the [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) (MCP 2025-03-26 spec)
 - Sessions are created on first request and identified by the `mcp-session-id` header
 - Tool names are converted from camelCase to snake_case (`listContentTypes` -> `list_content_types`)
+- Each tool includes a `title` (e.g. "Strapi: Search Content") and `annotations` (`readOnlyHint`, `destructiveHint`) for better client integration
+- All tool schemas include `additionalProperties: false` to ensure compatibility with `mcp-remote` and Claude Desktop
+- The server returns dynamic `instructions` during initialization so clients know when to load tools — plugins that provide `getMeta()` get keyword-driven entries (e.g. `/youtube`, `/octalens`), others get auto-generated summaries
 - Sessions expire after the configured timeout (default: 4 hours)
 - Maximum concurrent sessions can be configured (default: 100)
 
+### Setup
+
+#### 1. Enable permissions
+
+In the Strapi admin panel:
+
+1. Go to **Settings > API Tokens**
+2. Create a new API token (or use an existing one)
+3. Under **Permissions**, enable the **Ai-sdk** actions: `handle` (covers POST, GET, DELETE for MCP)
+4. Copy the token
+
+Alternatively, for public access without a token:
+
+1. Go to **Settings > Users & Permissions > Roles > Public**
+2. Under **Ai-sdk**, enable `handle`
+3. Save
+
+#### 2. Connect your AI client
+
+The MCP endpoint URL is:
+
+```
+http://localhost:1337/api/ai-sdk/mcp
+```
+
+For remote deployments, replace `localhost:1337` with your Strapi URL.
+
 ### Connecting from Claude Desktop
 
-Add to your Claude Desktop MCP config:
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+**Without authentication (public permissions enabled):**
 
 ```json
 {
@@ -325,9 +359,53 @@ Add to your Claude Desktop MCP config:
 }
 ```
 
+**With an API token:**
+
+```json
+{
+  "mcpServers": {
+    "strapi": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://localhost:1337/api/ai-sdk/mcp",
+        "--header",
+        "Authorization: Bearer YOUR_STRAPI_API_TOKEN"
+      ]
+    }
+  }
+}
+```
+
+Restart Claude Desktop after saving the config.
+
+### Connecting from Claude Code
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "strapi": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://localhost:1337/api/ai-sdk/mcp",
+        "--header",
+        "Authorization: Bearer YOUR_STRAPI_API_TOKEN"
+      ]
+    }
+  }
+}
+```
+
+Or run: `claude mcp add strapi -- npx mcp-remote http://localhost:1337/api/ai-sdk/mcp --header "Authorization: Bearer YOUR_STRAPI_API_TOKEN"`
+
 ### Connecting from Cursor
 
-Add to your Cursor MCP settings:
+Add to your Cursor MCP settings (`.cursor/mcp.json`):
+
+**Without authentication:**
 
 ```json
 {
@@ -336,6 +414,71 @@ Add to your Cursor MCP settings:
       "url": "http://localhost:1337/api/ai-sdk/mcp"
     }
   }
+}
+```
+
+**With an API token:**
+
+```json
+{
+  "mcpServers": {
+    "strapi": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://localhost:1337/api/ai-sdk/mcp",
+        "--header",
+        "Authorization: Bearer YOUR_STRAPI_API_TOKEN"
+      ]
+    }
+  }
+}
+```
+
+### Testing with cURL
+
+```bash
+# 1. Initialize a session
+curl -s -X POST http://localhost:1337/api/ai-sdk/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer YOUR_STRAPI_API_TOKEN" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}'
+
+# 2. Send initialized notification (use the mcp-session-id from step 1)
+curl -s -X POST http://localhost:1337/api/ai-sdk/mcp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_STRAPI_API_TOKEN" \
+  -H "mcp-session-id: SESSION_ID_FROM_STEP_1" \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+
+# 3. List available tools
+curl -s -X POST http://localhost:1337/api/ai-sdk/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer YOUR_STRAPI_API_TOKEN" \
+  -H "mcp-session-id: SESSION_ID_FROM_STEP_1" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+
+# 4. Call a tool
+curl -s -X POST http://localhost:1337/api/ai-sdk/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer YOUR_STRAPI_API_TOKEN" \
+  -H "mcp-session-id: SESSION_ID_FROM_STEP_1" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_content_types","arguments":{}}}'
+```
+
+### MCP Configuration
+
+```typescript
+// config/plugins.ts
+config: {
+  mcp: {
+    sessionTimeoutMs: 4 * 60 * 60 * 1000,  // 4 hours (default)
+    maxSessions: 100,                        // default
+    cleanupInterval: 100,                    // cleanup expired sessions every N requests
+  },
 }
 ```
 
@@ -533,7 +676,7 @@ export const mySearchTool = {
 };
 ```
 
-**2. Create the `ai-tools` service:**
+**2. Create the `ai-tools` service with optional `getMeta()`:**
 
 ```typescript
 // server/src/services/ai-tools.ts
@@ -543,6 +686,19 @@ import { tools } from '../tools';
 export default ({ strapi }: { strapi: Core.Strapi }) => ({
   getTools() {
     return tools;
+  },
+
+  /**
+   * Optional: provide metadata so the MCP server instructions
+   * include your plugin's capabilities and trigger keywords.
+   * Without this, a summary is auto-generated from tool descriptions.
+   */
+  getMeta() {
+    return {
+      label: 'My Plugin',
+      description: 'Search and manage my plugin data with relevance ranking',
+      keywords: ['/my-plugin', 'my data', 'search my stuff'],
+    };
   },
 });
 ```
@@ -574,6 +730,22 @@ interface ToolDefinition {
   publicSafe?: boolean;            // If true, available in public/widget chat
 }
 ```
+
+#### ToolSourceMeta Interface (optional `getMeta()`)
+
+When your plugin provides `getMeta()` on its `ai-tools` service, the MCP server instructions include your plugin's capabilities with trigger keywords. This helps Claude Desktop's "Load tools when needed" mode activate the right server for your plugin's queries.
+
+Without `getMeta()`, the AI SDK auto-generates a summary from your tool descriptions — so this is optional but recommended for better discoverability.
+
+```typescript
+interface ToolSourceMeta {
+  label: string;          // Human-readable label, e.g. "YouTube Transcripts"
+  description: string;    // One-line capability summary for MCP instructions
+  keywords?: string[];    // Trigger keywords/prefixes, e.g. ["/youtube", "/yt", "transcript"]
+}
+```
+
+Keywords that start with `/` are rendered as slash-command hints in the instructions (e.g. `/youtube or /yt — Fetch and search YouTube transcripts`). Other keywords are included as natural-language triggers.
 
 #### Canonical Architecture Pattern
 

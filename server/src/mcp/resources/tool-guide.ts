@@ -13,7 +13,7 @@ function toSnakeCase(str: string): string {
  * Handles the common types used in tool schemas.
  */
 function extractType(field: any): string {
-  const def = field?._zod?.def;
+  const def = field?._zod?.def ?? field?.def;
   if (!def) return 'unknown';
 
   switch (def.type) {
@@ -24,11 +24,11 @@ function extractType(field: any): string {
     case 'boolean':
       return 'boolean';
     case 'enum':
-      return Object.keys(def.entries).join(' | ');
+      return def.entries ? Object.keys(def.entries).join(' | ') : 'enum';
     case 'optional':
-      return extractType({ _zod: { def: def.innerType } });
+      return extractType(def.innerType);
     case 'default':
-      return extractType({ _zod: { def: def.innerType } });
+      return extractType(def.innerType);
     case 'record':
       return 'object';
     case 'array':

@@ -20,8 +20,29 @@ export interface ToolDefinition {
 /** Type alias for external plugin authors to import when contributing tools */
 export type AiToolContribution = ToolDefinition;
 
+/** Metadata a plugin can optionally provide to describe its tool source */
+export interface ToolSourceMeta {
+  /** Short human-readable label, e.g. "YouTube Transcripts" */
+  label: string;
+  /** One-line capability summary for MCP instructions */
+  description: string;
+  /** Trigger keywords/prefixes users might type, e.g. ["/youtube", "/yt", "transcript"] */
+  keywords?: string[];
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
+  private readonly sourceMeta = new Map<string, ToolSourceMeta>();
+
+  /** Register metadata for a tool source (plugin namespace) */
+  setSourceMeta(sourceId: string, meta: ToolSourceMeta): void {
+    this.sourceMeta.set(sourceId, meta);
+  }
+
+  /** Get metadata for a tool source, if provided */
+  getSourceMeta(sourceId: string): ToolSourceMeta | undefined {
+    return this.sourceMeta.get(sourceId);
+  }
 
   register(def: ToolDefinition): void {
     this.tools.set(def.name, def);

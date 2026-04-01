@@ -1,6 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import type { Context } from 'koa';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { randomUUID } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { MCPSession, PluginConfig, PluginInstance } from '../lib/types';
@@ -38,7 +38,7 @@ async function cleanupExpiredSessions(
   }
 }
 
-async function closeSessionQuietly(server: McpServer): Promise<void> {
+async function closeSessionQuietly(server: Server): Promise<void> {
   try {
     await server.close();
   } catch {

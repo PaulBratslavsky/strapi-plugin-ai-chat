@@ -72,6 +72,15 @@ function discoverPluginTools(strapi: Core.Strapi, registry: ToolRegistry) {
       const count = registerContributedTools(strapi, registry, pluginName, contributed);
       if (count > 0) {
         strapi.log.info(`[${PLUGIN_ID}] Registered ${count} tools from plugin: ${pluginName}`);
+
+        // Collect optional source metadata for MCP instructions
+        const safeName = pluginName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        if (typeof aiToolsService.getMeta === 'function') {
+          const meta = aiToolsService.getMeta();
+          if (meta?.label && meta?.description) {
+            registry.setSourceMeta(safeName, meta);
+          }
+        }
       }
     } catch (err) {
       strapi.log.warn(`[${PLUGIN_ID}] Tool discovery failed for ${pluginName}: ${err}`);
