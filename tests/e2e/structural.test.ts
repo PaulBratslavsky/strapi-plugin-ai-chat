@@ -156,17 +156,19 @@ describe('cross-plugin wiring', () => {
 });
 
 describe('permission scoping', () => {
-  it('hides write and destructive tools from a read-only token', async () => {
-    const readOnly = process.env.STRAPI_READONLY_TOKEN;
-    if (!readOnly) return; // skipped unless a scoped token is provided
+  it.skipIf(!process.env.STRAPI_READONLY_TOKEN)(
+    'hides write and destructive tools from a read-only token',
+    async () => {
+      const readOnly = process.env.STRAPI_READONLY_TOKEN!;
 
-    const scoped = await connect(readOnly);
-    const scopedTools = await toolMap(scoped);
+      const scoped = await connect(readOnly);
+      const scopedTools = await toolMap(scoped);
 
-    expect(scopedTools).toHaveProperty('search_content');
-    expect(scopedTools).not.toHaveProperty('create_content');
-    expect(scopedTools).not.toHaveProperty('send_email');
+      expect(scopedTools).toHaveProperty('search_content');
+      expect(scopedTools).not.toHaveProperty('create_content');
+      expect(scopedTools).not.toHaveProperty('send_email');
 
-    await scoped.close();
-  });
+      await scoped.close();
+    },
+  );
 });

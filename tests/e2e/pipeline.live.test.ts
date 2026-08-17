@@ -123,7 +123,28 @@ async function deleteExistingTranscript(): Promise<void> {
     name: listName,
     arguments: { filters: { videoId: VIDEO_ID } },
   });
-  const existing: Array<{ documentId: string }> = listResult?.structuredContent?.results ?? [];
+
+  // Fail loudly if the list tool's structuredContent shape isn't what we
+  // expect, rather than silently falling back to `[]`. A silent fallback
+  // here would make cleanup a no-op and turn the "auto-embeds" assertion
+  // below into a false green — exactly the failure mode this cleanup step
+  // exists to prevent (see the comment above).
+  const structuredContent = listResult?.structuredContent;
+  if (!structuredContent || typeof structuredContent !== 'object') {
+    throw new Error(
+      `${listName} returned no structuredContent object to clean up from. ` +
+        `Full result: ${JSON.stringify(listResult)}`,
+    );
+  }
+  if (!Array.isArray(structuredContent.results)) {
+    throw new Error(
+      `${listName}'s structuredContent has no "results" array — cannot verify cleanup ran. ` +
+        `Keys actually present: ${Object.keys(structuredContent).join(', ') || '(none)'}. ` +
+        `Update this test if the content-manager list tool's response shape changed.`,
+    );
+  }
+
+  const existing: Array<{ documentId: string }> = structuredContent.results;
 
   for (const doc of existing) {
     await client.callTool({
