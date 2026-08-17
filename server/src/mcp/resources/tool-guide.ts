@@ -1,12 +1,5 @@
 import type { ToolRegistry, ToolDefinition } from '../../lib/tool-registry';
-
-/** Convert camelCase to snake_case, matching the MCP server's naming convention */
-function toSnakeCase(str: string): string {
-  return str
-    .replace(/:/g, '__')
-    .replace(/-/g, '_')
-    .replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-}
+import { toSnakeCase } from '../naming';
 
 /**
  * Extract a human-readable type string from a Zod field.
@@ -29,6 +22,11 @@ function extractType(field: any): string {
       return extractType(def.innerType);
     case 'default':
       return extractType(def.innerType);
+    case 'pipe':
+      // z.preprocess(...) (used by jsonCoercible) compiles to a ZodPipe whose
+      // `out` side is the schema we actually validate against — unwrap to it
+      // instead of surfacing the internal "pipe" implementation type.
+      return extractType(def.out);
     case 'record':
       return 'object';
     case 'array':
