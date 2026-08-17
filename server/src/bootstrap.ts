@@ -4,6 +4,7 @@ import { registerAiSdkMcpTools } from './mcp';
 import { AIProvider } from './lib/ai-provider';
 import { ToolRegistry } from './lib/tool-registry';
 import { builtInTools } from './tools/definitions';
+import { checkPluginCompat } from './lib/check-compat';
 import type { PluginConfig, PluginInstance } from './lib/types';
 
 const PLUGIN_ID = 'ai-sdk';
@@ -63,6 +64,18 @@ function discoverPluginTools(strapi: Core.Strapi, registry: ToolRegistry) {
       }
 
       strapi.log.info(`[${PLUGIN_ID}] Found ai-tools service on plugin: ${pluginName}`);
+
+      // Diagnostic only — a mismatch warns but does not block registration.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const ownVersion = require('../../package.json').version as string;
+        const declared = (pluginInstance as any)?.package?.peerDependencies?.[
+          'strapi-plugin-ai-sdk'
+        ];
+        checkPluginCompat(strapi, pluginName, declared, ownVersion);
+      } catch {
+        // Version metadata is not always reachable; never block discovery.
+      }
 
       const contributed = aiToolsService.getTools();
       if (!Array.isArray(contributed)) continue;
