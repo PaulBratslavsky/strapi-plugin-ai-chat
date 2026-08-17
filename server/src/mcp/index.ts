@@ -12,24 +12,26 @@ export async function registerAiSdkMcpTools(
   strapi: Core.Strapi,
   registry: ToolRegistry,
 ): Promise<void> {
-  const mcp = strapi.ai?.mcp;
-
-  // strapi.ai is absent below 5.47; isEnabled() is false when the host has
-  // not set `mcp: { enabled: true }` in config/server.ts.
-  if (!mcp?.isEnabled()) {
-    strapi.log.info(
-      '[ai-sdk:mcp] Official MCP server not enabled — skipping tool registration. ' +
-        'Requires Strapi >= 5.47 and `mcp: { enabled: true }` in config/server.ts.',
-    );
-    return;
-  }
-
-  // A failure anywhere in here (permission registration, an unexpected throw
-  // during tool/resource registration) must degrade to "MCP tools
-  // unavailable" — never "Strapi is down". registerToolsOnMcp already
+  // A failure anywhere in here — including reading `strapi.ai?.mcp` or
+  // calling `isEnabled()`, not just permission/tool/resource registration —
+  // must degrade to "MCP tools unavailable", never "Strapi is down". A host
+  // shape change (e.g. `strapi.ai` or `isEnabled()` changing across a Strapi
+  // version) must not be able to crash boot. registerToolsOnMcp already
   // isolates per-tool failures; this is the outer backstop for everything
   // else in the registration pass.
   try {
+    const mcp = strapi.ai?.mcp;
+
+    // strapi.ai is absent below 5.47; isEnabled() is false when the host has
+    // not set `mcp: { enabled: true }` in config/server.ts.
+    if (!mcp?.isEnabled()) {
+      strapi.log.info(
+        '[ai-sdk:mcp] Official MCP server not enabled — skipping tool registration. ' +
+          'Requires Strapi >= 5.47 and `mcp: { enabled: true }` in config/server.ts.',
+      );
+      return;
+    }
+
     await registerMcpAdminPermissions(strapi);
     const count = registerToolsOnMcp(strapi, registry);
     registerResourcesOnMcp(strapi, registry);
