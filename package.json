@@ -44,6 +44,8 @@
     "test:ts:back": "npx tsc -p server/tsconfig.json --noEmit",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts tests/e2e/structural.test.ts",
+    "test:e2e:live": "E2E_LIVE=1 vitest run --config vitest.e2e.config.ts",
     "test:api": "npx tsx tests/ai-sdk.test.ts",
     "test:stream": "node tests/test-stream.mjs",
     "test:chat": "node tests/test-chat.mjs",
@@ -62,6 +64,7 @@
     "zod": "^4.3.5"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@strapi/sdk-plugin": "^5.4.0",
     "@strapi/strapi": "^5.47.0",
     "@strapi/typescript-utils": "^5.47.0",
