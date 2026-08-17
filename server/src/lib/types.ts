@@ -20,12 +20,6 @@ export type ChatModelName = (typeof CHAT_MODELS)[number];
 export const DEFAULT_MODEL: ChatModelName = 'claude-sonnet-4-20250514';
 export const DEFAULT_TEMPERATURE = 0.7;
 
-export interface MCPConfig {
-  sessionTimeoutMs?: number;
-  maxSessions?: number;
-  cleanupInterval?: number;
-}
-
 export const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 export const DEFAULT_MAX_CONVERSATION_MESSAGES = 15;
 export const DEFAULT_PUBLIC_MAX_CONVERSATION_MESSAGES = 10;
@@ -56,7 +50,6 @@ export interface PluginConfig {
   maxConversationMessages?: number;
   /** Max tool call steps for admin chat (defaults to 3) */
   maxSteps?: number;
-  mcp?: MCPConfig;
   guardrails?: GuardrailConfig;
   publicChat?: PublicChatConfig;
 }
