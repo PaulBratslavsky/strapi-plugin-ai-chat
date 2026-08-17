@@ -576,7 +576,7 @@ The plugin includes a guardrail middleware that checks user input before it reac
 
 ### How It Works
 
-1. Extract user input (adapts to request shape: messages, prompt, or JSON-RPC params)
+1. Extract user input (adapts to request shape: `messages` for `/chat`/`/public-chat`, `prompt` for `/ask`/`/ask-stream`)
 2. Run optional `beforeProcess` hook (for custom logic like external moderation APIs)
 3. Normalize text (NFKC, strip zero-width characters, collapse whitespace)
 4. Match against compiled regex patterns
