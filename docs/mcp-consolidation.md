@@ -1,5 +1,10 @@
 # Tool Plugin Strategy: Standalone vs ai-sdk Extensions
 
+> **Superseded in part by [plugin-contract.md](./plugin-contract.md)** as of
+> v1.1.0, which is the source of truth for the tool contract, namespacing,
+> Zod rules, and MCP permission tiers. This document is retained for its
+> historical rationale.
+
 ## Background
 
 Several existing plugins have their own MCP servers: `strapi-content-embeddings`, `yt-embeddings-strapi-plugin`, `strapi-octolens-mentions-plugin`. These work standalone — users connect an LLM client directly to each plugin's MCP endpoint.
@@ -119,6 +124,16 @@ When migrating a standalone plugin to an extension, **keep all existing routes, 
 - MCP controller
 - MCP auth middleware
 - `@modelcontextprotocol/sdk` dependency
+
+  > **Update (v1.1.0):** this line used to describe only what a *standalone*
+  > plugin should remove when converting to an extension. As of v1.1.0 it is
+  > also accurate for `strapi-plugin-ai-sdk` itself — the hub's own
+  > hand-rolled MCP server was replaced by a thin bridge onto Strapi's
+  > official built-in MCP server (Strapi >= 5.47), and
+  > `@modelcontextprotocol/sdk` was dropped from the hub's runtime
+  > `dependencies` (it remains only as a `devDependency`, used by the E2E
+  > test client). See [`plugin-contract.md`](./plugin-contract.md) for the
+  > current architecture.
 
 **Add:**
 - `ai-tools` service exposing tool definitions

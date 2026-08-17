@@ -1,5 +1,10 @@
 # Tool Standardization Spec
 
+> **Superseded in part by [plugin-contract.md](./plugin-contract.md)** as of
+> v1.1.0, which is the source of truth for the tool contract, namespacing,
+> Zod rules, and MCP permission tiers. This document is retained for its
+> historical rationale.
+
 > The definitive standard for building tools in the Strapi AI plugin ecosystem.
 > `strapi-plugin-ai-sdk` is the hub. Extension plugins register tools with it.
 

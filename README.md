@@ -1,6 +1,6 @@
 # Strapi Plugin AI SDK
 
-A Strapi v5 plugin that adds an AI-powered chat assistant to the admin panel, exposes AI endpoints for frontend apps (Next.js, etc.), and provides an MCP server for external AI clients. Built on [Vercel AI SDK](https://ai-sdk.dev/) with [Anthropic Claude](https://www.anthropic.com/) as the default provider.
+A Strapi v5 plugin that adds an AI-powered chat assistant to the admin panel, exposes AI endpoints for frontend apps (Next.js, etc.), and exposes its tools to external AI clients over Strapi's official MCP server (Strapi >= 5.47). Built on [Vercel AI SDK](https://ai-sdk.dev/) with [Anthropic Claude](https://www.anthropic.com/) as the default provider.
 
 ## Features
 
@@ -9,7 +9,7 @@ A Strapi v5 plugin that adds an AI-powered chat assistant to the admin panel, ex
 - **API Endpoints** -- `/ask`, `/ask-stream`, and `/chat` for frontend consumption (compatible with `useChat` from `@ai-sdk/react`)
 - **Public Chat** -- sandboxed public-facing chat with read-only tools and a separate public memory store
 - **Embeddable Widget** -- drop a single `<script>` tag on any website to add an AI chat bubble
-- **MCP Server** -- expose tools to external AI clients (Claude Desktop, Cursor, etc.) via the Model Context Protocol
+- **MCP** -- exposes its tools to external AI clients (Claude Desktop, Cursor, etc.) over Strapi's official built-in MCP server (Strapi >= 5.47, admin-token authenticated)
 - **Guardrails** -- regex-based input safety middleware that blocks prompt injection, jailbreaks, and destructive commands
 - **Extensible** -- register custom tools and AI providers at runtime
 
@@ -154,13 +154,6 @@ export default ({ env }) => ({
       // System Prompt (optional)
       systemPrompt: 'You are a helpful CMS assistant.\n\n{tools}',
 
-      // MCP Session Tuning (optional)
-      mcp: {
-        sessionTimeoutMs: 4 * 60 * 60 * 1000,      // 4 hours (default)
-        maxSessions: 100,                            // default
-        cleanupInterval: 100,                        // cleanup every N requests
-      },
-
       // Public Chat (optional)
       publicChat: {
         chatModel: 'claude-haiku-4-5-20251001',     // optional cheaper model
@@ -179,6 +172,10 @@ export default ({ env }) => ({
   },
 });
 ```
+
+There is no MCP configuration here — MCP is enabled at the **Strapi** level
+(`mcp: { enabled: true }` in the host's `config/server.ts`), not under this
+plugin's config. See [MCP Server](#mcp-server) below.
 
 ### Supported Claude Models
 
@@ -199,9 +196,8 @@ export default ({ env }) => ({
 | `POST` | `/api/ai-sdk/chat` | Chat with AI SDK UI message stream protocol |
 | `POST` | `/api/ai-sdk/public-chat` | Public chat with read-only tools and public memories |
 | `GET` | `/api/ai-sdk/widget.js` | Embeddable chat widget script |
-| `POST` | `/api/ai-sdk/mcp` | MCP JSON-RPC requests |
-| `GET` | `/api/ai-sdk/mcp` | MCP session management |
-| `DELETE` | `/api/ai-sdk/mcp` | MCP session cleanup |
+
+MCP is no longer served by this plugin — see [MCP Server](#mcp-server) below for the current `/mcp` endpoint, which is served by Strapi itself.
 
 ### Admin API (admin panel only)
 
@@ -286,61 +282,127 @@ The AI assistant has access to these tools. Tools marked as **public** are also 
 |------|----------|-------------|
 | `listContentTypes` | `list_content_types` | List all Strapi content types and components with their fields and relations |
 | `searchContent` | `search_content` | Search and query any content type with filters, sorting, and pagination |
+| `findOneContent` | `find_one_content` | Fetch a single document by ID |
 | `aggregateContent` | `aggregate_content` | Count, group, and analyze content (faster than searchContent for analytics) |
-| `writeContent` | `write_content` | Create or update documents in any content type |
+| `createContent` | `create_content` | Create a new document in any content type |
+| `updateContent` | `update_content` | Update an existing document in any content type |
+| `uploadMedia` | `upload_media` | Upload a media file (from a URL or base64) to the Media Library |
 | `sendEmail` | `send_email` | Send emails via the configured email provider (e.g. Resend) |
 
-Additionally, the AI SDK automatically discovers tools from other installed plugins (see [Extending the Plugin](#adding-tools-from-other-plugins-convention-based-discovery)). For example, with the mentions and embeddings plugins installed, the AI also has access to `searchMentions`, `semanticSearch`, `ragQuery`, and more.
+These 8 tools are the ones exposed over MCP (see [MCP Server](#mcp-server)); the plugin also has chat-only tools (memory, notes, tasks) that never leave the admin/public chat paths. Additionally, the AI SDK automatically discovers tools from other installed extension plugins — see [`docs/plugin-contract.md`](./docs/plugin-contract.md) for the discovery contract. For example, with `strapi-plugin-ai-sdk-yt-transcripts` and `strapi-plugin-ai-sdk-yt-embeddings` installed, the AI also has access to transcript fetching/search tools and semantic YouTube-knowledge search.
 
 ### Tool Details
 
 **searchContent** parameters: `contentType` (required), `query`, `filters`, `fields`, `sort`, `page`, `pageSize` (max 50)
 
-**writeContent** parameters: `contentType` (required), `action` (`create` or `update`), `documentId` (required for update), `data` (required), `status` (`draft` or `published`)
+**createContent** / **updateContent** parameters: `contentType` (required), `documentId` (required for update), `data` (required), `status` (`draft` or `published`)
 
 **sendEmail** parameters: `to` (required), `subject` (required), `html` (required), `text`, `cc`, `bcc`, `replyTo`. The tool always confirms the recipient with the user before sending. See [docs/sending-emails-with-resend.md](./docs/sending-emails-with-resend.md) for setup.
 
 ## MCP Server
 
-The plugin exposes an [MCP](https://modelcontextprotocol.io/) server at `/api/ai-sdk/mcp` that lets external AI clients (Claude Desktop, Claude Code, Cursor, Windsurf, etc.) call the public tools directly.
+As of `v1.1.0`, MCP is served by **Strapi itself** — the plugin no longer runs
+its own MCP server, sessions, or transport. It registers its tools onto
+Strapi's official built-in MCP server (`strapi.ai.mcp`, Strapi >= 5.47),
+which serves a single endpoint at `/mcp` for the whole application.
+
+This is a breaking change from pre-1.1.0 versions. If you're upgrading, read
+[Migrating from 0.x](#migrating-from-0x) below before touching client
+configs.
+
+### Requirements
+
+- **Strapi >= 5.47.0**
+- The host app's own `config/server.ts` must set `mcp: { enabled: true }` —
+  the plugin cannot turn this on for you:
+
+  ```typescript
+  // config/server.ts
+  export default ({ env }) => ({
+    host: env('HOST', '0.0.0.0'),
+    port: env.int('PORT', 1337),
+    mcp: {
+      enabled: true,
+    },
+  });
+  ```
+
+- An **Admin API token** (not a Content API token — see below) whose role
+  grants the `plugin::ai-sdk.mcp.*` permission(s) for the tools you want to
+  reach.
 
 ### How It Works
 
-- Uses the low-level MCP `Server` class for full control over JSON Schema output, ensuring compatibility with `mcp-remote` and all MCP clients regardless of Zod version
-- Uses the [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) (MCP 2025-03-26 spec)
-- Sessions are created on first request and identified by the `mcp-session-id` header
-- Tool names are converted from camelCase to snake_case (`listContentTypes` -> `list_content_types`)
-- Each tool includes a `title` (e.g. "Strapi: Search Content") and `annotations` (`readOnlyHint`, `destructiveHint`) for better client integration
-- All tool schemas include `additionalProperties: false` to ensure compatibility with `mcp-remote` and Claude Desktop
-- Custom Zod-to-JSON Schema converter that supports both Zod 3 and Zod 4, producing complete type information (types, descriptions, defaults, enums, constraints) for every parameter
-- MCP arguments are coerced through the Zod schema before execution — stringified JSON values (e.g. `fields: '["title"]'`) are automatically parsed to their expected types, and defaults are applied for omitted optional parameters
-- The server returns dynamic `instructions` during initialization so clients know when to load tools — plugins that provide `getMeta()` get keyword-driven entries (e.g. `/youtube`, `/octalens`), others get auto-generated summaries
-- Sessions expire after the configured timeout (default: 4 hours)
-- Maximum concurrent sessions can be configured (default: 100)
+- The plugin's `ToolRegistry` is unchanged — it still backs the admin chat
+  and public widget. At boot, `registerAiSdkMcpTools()` additionally walks
+  every non-internal tool in the registry and calls
+  `strapi.ai.mcp.registerTool()` for it.
+- Tool names are converted from the registry's camelCase/namespaced form to
+  snake_case (`searchContent` -> `search_content`,
+  `ai-sdk-yt-transcripts__fetchTranscript` ->
+  `ai_sdk_yt_transcripts__fetch_transcript`).
+- Each tool is gated by an admin permission action — `plugin::ai-sdk.mcp.read`,
+  `.write`, or `.destructive` — derived from the tool's `access` field (or
+  `publicSafe` when `access` is unset). A token only sees tools its role's
+  permissions cover; permission gating filters `tools/list` itself, not just
+  execution.
+- Schemas are handed to the SDK as plain Zod 4 objects — no custom
+  Zod-to-JSON-Schema converter. A handful of this plugin's own array/object
+  parameters are wrapped in `jsonCoercible()` so stringified JSON arguments
+  (e.g. `fields: '["title"]'` from `mcp-remote`) still parse; that tolerance
+  is **not** automatic for third-party tools' object/array parameters — see
+  [`docs/plugin-contract.md`](./docs/plugin-contract.md#6-zod-rules).
+- A tool that fails to register (e.g. a name collision with one of Strapi's
+  own auto-derived CRUD tools) is skipped with a warning; it does not break
+  Strapi's boot.
+- Strapi's own auto-generated content tools (`list_<type>`, `get_<type>`,
+  etc.) appear on the same `/mcp` endpoint, alongside this plugin's tools.
+  There's no way to disable the built-ins; gate exposure by only granting the
+  permissions you want a given token to reach.
+- There is no server-level `instructions` hook to advertise "what this server
+  is for" during `initialize` — see
+  [`docs/plugin-contract.md`](./docs/plugin-contract.md#7-server-instructions-are-gone-partial-mitigation-only)
+  for what replaced it and why it's a partial mitigation, not a full one.
+
+For the full contract — the `ai-tools` service shape, `ToolDefinition`,
+namespacing, Zod rules, and the three permission tiers — see
+[`docs/plugin-contract.md`](./docs/plugin-contract.md).
 
 ### Setup
 
-#### 1. Enable permissions
+#### 1. Enable MCP on the host
 
-In the Strapi admin panel:
+Set `mcp: { enabled: true }` in `config/server.ts` (see Requirements above)
+and restart Strapi. Check the log line at boot:
 
-1. Go to **Settings > API Tokens**
-2. Create a new API token (or use an existing one)
-3. Under **Permissions**, enable the **Ai-sdk** actions: `handle` (covers POST, GET, DELETE for MCP)
+```
+[ai-sdk:mcp] Registered 8 tool(s) on the official MCP server.
+```
+
+If instead you see
+`[ai-sdk:mcp] Official MCP server not enabled — skipping tool registration.`,
+either the Strapi version is below 5.47 or `mcp.enabled` is not set.
+
+#### 2. Grant permissions to an Admin API token
+
+MCP authenticates with **Admin API tokens**, not Content API tokens:
+
+1. Go to **Settings → Administration Panel → API Tokens**
+2. Create a new token (or edit an existing one)
+3. Under **Permissions**, find the **Ai-sdk** section and enable the tiers
+   this token should reach: `mcp.read`, `mcp.write`, `mcp.destructive`
 4. Copy the token
 
-Alternatively, for public access without a token:
+A read-only token (only `mcp.read` granted) gets a genuinely browse-only
+surface — write and destructive tools don't appear in `tools/list` at all
+for that token, not just refuse execution.
 
-1. Go to **Settings > Users & Permissions > Roles > Public**
-2. Under **Ai-sdk**, enable `handle`
-3. Save
-
-#### 2. Connect your AI client
+#### 3. Connect your AI client
 
 The MCP endpoint URL is:
 
 ```
-http://localhost:1337/api/ai-sdk/mcp
+http://localhost:1337/mcp
 ```
 
 For remote deployments, replace `localhost:1337` with your Strapi URL.
@@ -349,20 +411,6 @@ For remote deployments, replace `localhost:1337` with your Strapi URL.
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
-**Without authentication (public permissions enabled):**
-
-```json
-{
-  "mcpServers": {
-    "strapi": {
-      "url": "http://localhost:1337/api/ai-sdk/mcp"
-    }
-  }
-}
-```
-
-**With an API token:**
-
 ```json
 {
   "mcpServers": {
@@ -370,9 +418,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://localhost:1337/api/ai-sdk/mcp",
+        "http://localhost:1337/mcp",
         "--header",
-        "Authorization: Bearer YOUR_STRAPI_API_TOKEN"
+        "Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN"
       ]
     }
   }
@@ -392,34 +440,20 @@ Add to `~/.claude/settings.json`:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://localhost:1337/api/ai-sdk/mcp",
+        "http://localhost:1337/mcp",
         "--header",
-        "Authorization: Bearer YOUR_STRAPI_API_TOKEN"
+        "Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN"
       ]
     }
   }
 }
 ```
 
-Or run: `claude mcp add strapi -- npx mcp-remote http://localhost:1337/api/ai-sdk/mcp --header "Authorization: Bearer YOUR_STRAPI_API_TOKEN"`
+Or run: `claude mcp add strapi -- npx mcp-remote http://localhost:1337/mcp --header "Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN"`
 
 ### Connecting from Cursor
 
 Add to your Cursor MCP settings (`.cursor/mcp.json`):
-
-**Without authentication:**
-
-```json
-{
-  "mcpServers": {
-    "strapi": {
-      "url": "http://localhost:1337/api/ai-sdk/mcp"
-    }
-  }
-}
-```
-
-**With an API token:**
 
 ```json
 {
@@ -428,65 +462,95 @@ Add to your Cursor MCP settings (`.cursor/mcp.json`):
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://localhost:1337/api/ai-sdk/mcp",
+        "http://localhost:1337/mcp",
         "--header",
-        "Authorization: Bearer YOUR_STRAPI_API_TOKEN"
+        "Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN"
       ]
     }
   }
 }
 ```
 
-### Testing with cURL
+### Testing with the MCP Inspector
 
 ```bash
-# 1. Initialize a session
-curl -s -X POST http://localhost:1337/api/ai-sdk/mcp \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Authorization: Bearer YOUR_STRAPI_API_TOKEN" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}'
-
-# 2. Send initialized notification (use the mcp-session-id from step 1)
-curl -s -X POST http://localhost:1337/api/ai-sdk/mcp \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_STRAPI_API_TOKEN" \
-  -H "mcp-session-id: SESSION_ID_FROM_STEP_1" \
-  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-
-# 3. List available tools
-curl -s -X POST http://localhost:1337/api/ai-sdk/mcp \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Authorization: Bearer YOUR_STRAPI_API_TOKEN" \
-  -H "mcp-session-id: SESSION_ID_FROM_STEP_1" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-
-# 4. Call a tool
-curl -s -X POST http://localhost:1337/api/ai-sdk/mcp \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Authorization: Bearer YOUR_STRAPI_API_TOKEN" \
-  -H "mcp-session-id: SESSION_ID_FROM_STEP_1" \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_content_types","arguments":{}}}'
+npx @modelcontextprotocol/inspector
 ```
 
-### MCP Configuration
+Connect to `http://localhost:1337/mcp` with a `Streamable HTTP` transport and
+an `Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN` header, then browse
+`tools/list` and the `strapi://ai-sdk/tools/guide` resource.
 
-```typescript
-// config/plugins.ts
-config: {
-  mcp: {
-    sessionTimeoutMs: 4 * 60 * 60 * 1000,  // 4 hours (default)
-    maxSessions: 100,                        // default
-    cleanupInterval: 100,                    // cleanup expired sessions every N requests
-  },
-}
-```
+### Migrating from 0.x
+
+Every existing MCP client config breaks on upgrade to `v1.1.0`. There is no
+backward-compatible shim — this was a hard cutover, not a gradual migration.
+
+1. **Endpoint moved.** `/api/ai-sdk/mcp` (this plugin) is gone. MCP now lives
+   at `/mcp`, served by Strapi itself, shared across the whole application
+   (including any other plugins' MCP tools and Strapi's own auto-generated
+   content tools).
+
+2. **Auth changed from Content API tokens to Admin API tokens.** A Content
+   API token that worked against `/api/ai-sdk/mcp` will not authenticate
+   against `/mcp` at all. You need an **Admin API token** (Settings →
+   Administration Panel → API Tokens), and that token's role must be granted
+   the new `plugin::ai-sdk.mcp.read` / `.write` / `.destructive` permissions
+   — there is no "Ai-sdk: handle" permission to carry forward; it's gone
+   along with the old controller.
+
+   Before:
+   ```json
+   {
+     "mcpServers": {
+       "strapi": {
+         "command": "npx",
+         "args": ["mcp-remote", "http://localhost:1337/api/ai-sdk/mcp",
+           "--header", "Authorization: Bearer YOUR_CONTENT_API_TOKEN"]
+       }
+     }
+   }
+   ```
+   After:
+   ```json
+   {
+     "mcpServers": {
+       "strapi": {
+         "command": "npx",
+         "args": ["mcp-remote", "http://localhost:1337/mcp",
+           "--header", "Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN"]
+       }
+     }
+   }
+   ```
+
+3. **Server `instructions` are gone.** Clients that decided whether to
+   activate this server based on the old dynamic `/youtube`, `/octalens`
+   -style routing hints in `instructions` no longer get that signal — there
+   is no hook for a plugin to set `instructions` on Strapi's server. The
+   closest replacement is the `strapi://ai-sdk/tools/guide` resource, but a
+   resource is only readable *after* a client has already activated the
+   server, so it does not recreate the old activation-time behavior. See
+   [`docs/plugin-contract.md`](./docs/plugin-contract.md#7-server-instructions-are-gone-partial-mitigation-only).
+
+4. **Stringified JSON arguments are no longer tolerated everywhere.** The old
+   server JSON-parsed any stringified array/object argument for *any*
+   registered tool before running it. The official server validates
+   arguments before the handler runs, so that generic tolerance is gone.
+   This plugin's own array/object parameters (`filters`, `fields`,
+   `populate`, `data` on `searchContent`, `findOneContent`,
+   `aggregateContent`, `createContent`, `updateContent`) still accept a
+   JSON-string form via a `jsonCoercible()` wrapper on those specific
+   parameters — but **third-party tools' object/array parameters get no
+   automatic coercion** unless that tool's author opts in the same way. If
+   you maintain an extension plugin and rely on `mcp-remote` clients sending
+   `tags: '["a","b"]'` instead of `tags: ["a","b"]`, wrap that parameter's
+   schema in `jsonCoercible()` yourself — see
+   [`docs/plugin-contract.md`](./docs/plugin-contract.md#jsoncoercible--opting-an-arrayobject-param-into-json-string-tolerance).
 
 ## Guardrails
 
-The plugin includes a guardrail middleware that checks all user input before it reaches the AI. It runs on every AI endpoint (`/ask`, `/ask-stream`, `/chat`, `/mcp`).
+The plugin includes a guardrail middleware that checks all user input before it reaches the AI. It runs on this plugin's own AI endpoints (`/ask`, `/ask-stream`, `/chat`, `/public-chat`). It does **not** run on `/mcp` — that endpoint is served by Strapi itself, not by this plugin's routes, so MCP tool calls are not guardrail-checked.
 
 ### What It Catches
 
@@ -644,9 +708,9 @@ flowchart LR
 
 1. On startup, the AI SDK scans every loaded plugin for an `ai-tools` service
 2. If found, it calls `getTools()` which returns an array of `ToolDefinition` objects
-3. Each tool is namespaced as `pluginName__toolName` (e.g., `octalens_mentions__searchMentions`) to prevent collisions
+3. Each tool is namespaced as `pluginName__toolName` (e.g., `octalens-mentions__searchMentions`) to prevent collisions — hyphens in the plugin id are preserved here and only converted to underscores later, for MCP (see step 5)
 4. Discovered tools are registered in the shared `ToolRegistry` alongside built-in tools
-5. All registered tools are available in admin chat, public chat (if `publicSafe: true`), and MCP
+5. All non-`internal` registered tools are available in admin chat, public chat (if `publicSafe: true`), and — when the host has enabled MCP (Strapi >= 5.47, `mcp: { enabled: true }`) and the connecting Admin API token's role grants the matching `plugin::ai-sdk.mcp.*` permission — on MCP, as a snake_cased, namespace-prefixed tool name (e.g. `octalens_mentions__search_mentions`)
 
 #### Creating an `ai-tools` Service in Your Plugin
 
@@ -691,9 +755,12 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   /**
-   * Optional: provide metadata so the MCP server instructions
-   * include your plugin's capabilities and trigger keywords.
-   * Without this, a summary is auto-generated from tool descriptions.
+   * Optional: feeds the `strapi://ai-sdk/tools/guide` MCP resource, where
+   * your plugin gets its own labeled section with a description and
+   * keywords. Note this is a resource, not server `instructions` — a client
+   * only sees it after already connecting, not before deciding whether to
+   * activate the server. Without getMeta(), your tools still appear on the
+   * guide, just grouped under the raw plugin id instead of a friendly label.
    */
   getMeta() {
     return {
@@ -729,54 +796,79 @@ interface ToolDefinition {
   schema: z.ZodObject<any>;        // Zod schema for parameter validation
   execute: (args: any, strapi: Core.Strapi, context?: ToolContext) => Promise<unknown>;
   internal?: boolean;              // If true, hidden from MCP (AI chat only)
-  publicSafe?: boolean;            // If true, available in public/widget chat
+  publicSafe?: boolean;            // If true, available in public/widget chat; also the default MCP tier is 'read' when true
+  access?: 'read' | 'write' | 'destructive'; // MCP permission tier override; defaults to 'read' if publicSafe else 'write'
 }
 ```
 
+**Zod note:** import `z` from your own `zod` package dependency — never from
+`@strapi/utils`. Both are Zod 4, but the MCP SDK's schema converter reads
+`.describe()` text from a per-instance registry; a schema built with
+`@strapi/utils`'s re-exported `z` is invisible to that registry and every
+parameter description silently vanishes in `tools/list`. See
+[`docs/plugin-contract.md`](./docs/plugin-contract.md#6-zod-rules) for the
+full explanation, plus the `jsonCoercible()` helper for opting an
+array/object parameter into stringified-JSON tolerance.
+
 #### ToolSourceMeta Interface (optional `getMeta()`)
 
-When your plugin provides `getMeta()` on its `ai-tools` service, the MCP server instructions include your plugin's capabilities with trigger keywords. This helps Claude Desktop's "Load tools when needed" mode activate the right server for your plugin's queries.
+When your plugin provides `getMeta()` on its `ai-tools` service, your tools
+get a labeled section — with description and keywords — in the
+`strapi://ai-sdk/tools/guide` MCP resource, instead of being grouped under
+the raw plugin id. This is **not** the same as the old MCP server
+`instructions` string (there is no such hook in Strapi's official server) —
+a resource is only readable after a client has already connected, so it does
+not influence whether a client like Claude Desktop decides to activate the
+server in the first place. It's still useful for an already-connected agent
+deciding which tool to call, or a human browsing capabilities via an
+inspector.
 
-Without `getMeta()`, the AI SDK auto-generates a summary from your tool descriptions — so this is optional but recommended for better discoverability.
+Without `getMeta()`, your tools are still registered and reachable — they
+just appear under the raw plugin id (e.g. `octalens-mentions`) rather than a
+friendly label in the guide.
 
 ```typescript
 interface ToolSourceMeta {
   label: string;          // Human-readable label, e.g. "YouTube Transcripts"
-  description: string;    // One-line capability summary for MCP instructions
-  keywords?: string[];    // Trigger keywords/prefixes, e.g. ["/youtube", "/yt", "transcript"]
+  description: string;    // One-line capability summary for the tool guide
+  keywords?: string[];    // Displayed alongside the description, e.g. ["/youtube", "/yt", "transcript"]
 }
 ```
 
-Keywords that start with `/` are rendered as slash-command hints in the instructions (e.g. `/youtube or /yt — Fetch and search YouTube transcripts`). Other keywords are included as natural-language triggers.
-
 #### Canonical Architecture Pattern
 
-The recommended pattern is to define tools once in `server/src/tools/` and consume them from both the AI SDK service and MCP handlers:
+Your plugin needs **no MCP code at all** — no server, no transport, no
+per-protocol wrapper. Define each tool once in `server/src/tools/` (Zod
+schema + business logic) and expose the array through your `ai-tools`
+service; `strapi-plugin-ai-sdk` bridges it onto every surface itself:
 
 ```mermaid
 flowchart TB
   subgraph "Your Plugin"
     T["server/src/tools/<br/>Canonical tool definitions<br/>(Zod schema + business logic)"]
-
-    subgraph "AI SDK Path"
-      S["services/ai-tools.ts<br/>getTools() → tools array"]
-    end
-
-    subgraph "MCP Path"
-      M["mcp/tools/*.ts<br/>Thin wrappers → MCP envelope"]
-      MS["mcp/server.ts"]
-    end
-
+    S["services/ai-tools.ts<br/>getTools() → tools array"]
     T --> S
-    T --> M
-    M --> MS
   end
 
-  S -->|"Discovery"| SDK["AI SDK ToolRegistry"]
-  MS -->|"JSON-RPC"| Clients["Claude Desktop / Cursor"]
+  subgraph "strapi-plugin-ai-sdk"
+    R["ToolRegistry<br/>(namespaced at discovery)"]
+    Bridge["mcp/register-tools.ts<br/>strapi.ai.mcp.registerTool()"]
+    R --> Bridge
+  end
+
+  S -->|"discovered at boot"| R
+  R --> Chat["Admin Chat"]
+  R --> Widget["Public Widget (if publicSafe)"]
+  Bridge -->|"tools/call"| MCPCore["strapi.ai.mcp (Strapi core, /mcp)"]
+  MCPCore --> Clients["Claude Desktop / Cursor / etc."]
 ```
 
-This eliminates duplication -- business logic lives in one place, and each consumer (AI SDK, MCP) uses a thin adapter.
+This eliminates duplication -- business logic lives in one place, and the hub
+plugin is the only thing that ever touches MCP. If you're maintaining an
+older plugin that still runs its own MCP server and transport code, that's
+the pattern this replaces — see
+[`docs/mcp-consolidation.md`](./docs/mcp-consolidation.md) for the migration
+guide.
 
 #### Real-World Examples
 
@@ -817,7 +909,7 @@ export default {
 };
 ```
 
-The tool is automatically available in AI chat and MCP (unless `internal: true`). No changes to `tools/index.ts` or `mcp/server.ts` needed.
+The tool is automatically available in AI chat and, on the next Strapi restart, MCP (unless `internal: true`) — gated by `plugin::ai-sdk.mcp.read`/`.write`/`.destructive` per its `access`/`publicSafe`. No changes to `tools/index.ts` or `mcp/register-tools.ts` needed.
 
 ### Adding an AI Provider
 
@@ -911,18 +1003,25 @@ server/src/
   controllers/
     controller.ts             # ask, askStream, chat, publicChat, serveWidget handlers
     public-memory.ts          # CRUD for public memories
-    mcp.ts                    # MCP session management
+    # no mcp.ts — MCP has no controller in this plugin; /mcp is served by Strapi core
   services/service.ts         # AI service facade
   routes/
-    content-api/index.ts      # Public API routes
+    content-api/index.ts      # Public API routes (/mcp is not one of them)
     admin/index.ts            # Admin routes
   tools/
     index.ts                  # Bridge: registry -> AI SDK ToolSet
     definitions/              # Tool definitions (schema + execute wrapper)
   tool-logic/                 # Pure business logic (shared by AI SDK + MCP)
-  mcp/
-    server.ts                 # MCP server factory
-    utils/sanitize.ts         # Content API sanitization
+  mcp/                        # Bridge onto Strapi's official MCP server (v1.1.0+)
+    index.ts                  # registerAiSdkMcpTools() — entry point, called from bootstrap.ts
+    permissions.ts             # registers plugin::ai-sdk.mcp.{read,write,destructive}
+    register-tools.ts          # walks registry.getPublic(), calls strapi.ai.mcp.registerTool()
+    register-resources.ts      # registers the strapi://ai-sdk/tools/guide resource
+    access.ts                  # read/write/destructive tier derivation
+    naming.ts                  # camelCase/namespace -> MCP snake_case name conversion
+    size-guard.ts              # ~1MB wire-size backstop
+    resources/tool-guide.ts    # tool-guide markdown generator
+    utils/sanitize.ts          # Content API sanitization
 
 admin/src/
   pages/                      # App router, HomePage, WidgetPreviewPage, MemoryStorePage
@@ -968,8 +1067,23 @@ With authentication:
 STRAPI_TOKEN=your-api-token npm run test:guardrails
 ```
 
+**MCP E2E suite** (separate from the scripts above — vitest-based, lives in `tests/e2e/`):
+
+```bash
+npm run test:e2e           # Structural, free — tool exposure, permission scoping, .describe() preservation, etc.
+E2E_LIVE=1 npm run test:e2e:live   # Live pipeline — real YouTube/OpenAI/Neon calls
+```
+
+Both require a Strapi host >= 5.47 with `mcp: { enabled: true }`, all three
+plugins linked, and `STRAPI_URL` / `STRAPI_ADMIN_TOKEN` (an admin token
+granting all three `plugin::ai-sdk.mcp.*` permissions) set. **Neither suite
+has been run as of the `v1.1.0` migration** — see
+[`docs/plugin-contract.md`](./docs/plugin-contract.md#9-e2e-suites--unverified-prerequisites)
+for the full prerequisite list before relying on them.
+
 ## Documentation
 
+- [Plugin Contract](./docs/plugin-contract.md) -- the `ai-tools` service contract, `ToolDefinition`, namespacing, Zod rules, and MCP permission tiers (source of truth as of v1.1.0)
 - [Architecture](./docs/architecture.md) -- full system architecture, data flows, extension guides
 - [Plugin Tool Discovery](./docs/plugin-tool-discovery.md) -- cross-plugin tool discovery architecture and implementation
 - [Tool Standardization Spec](./docs/tool-standardization-spec.md) -- canonical tool format, Zod-first vs MCP-native comparison, portability
