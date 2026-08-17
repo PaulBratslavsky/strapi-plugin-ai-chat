@@ -179,8 +179,8 @@ if its role grants that action. ai-sdk registers three actions of its own
 
 | Action id | Displayed as | Covers |
 |---|---|---|
-| `plugin::ai-sdk.mcp.read` | Use read-only AI SDK MCP tools | `listContentTypes`, `searchContent`, `findOneContent`, `aggregateContent`, and all 9 `yt-transcripts`/`yt-embeddings` tools |
-| `plugin::ai-sdk.mcp.write` | Use content-mutating AI SDK MCP tools | `createContent`, `updateContent`, `uploadMedia` |
+| `plugin::ai-sdk.mcp.read` | Use read-only AI SDK MCP tools | `listContentTypes`, `searchContent`, `findOneContent`, `aggregateContent`, and 8 of the 9 `yt-transcripts`/`yt-embeddings` tools (all but `fetchTranscript`) |
+| `plugin::ai-sdk.mcp.write` | Use content-mutating AI SDK MCP tools | `createContent`, `updateContent`, `uploadMedia`, and `yt-transcripts`' `fetchTranscript` (it creates a transcript document, which fires yt-embeddings' `afterCreate` hook — an OpenAI embeddings call plus pgvector writes) |
 | `plugin::ai-sdk.mcp.destructive` | Use irreversible / external-side-effect AI SDK MCP tools | `sendEmail` |
 
 ### Tier derivation (`server/src/mcp/access.ts`)
@@ -194,12 +194,22 @@ export function tierFor(def: Tierable): AccessTier {
 An explicit `access` always wins. Otherwise `publicSafe` (already meaning
 "read-only, safe for anonymous chat") implies `read`; everything else — the
 safe default for third-party tools that set neither field — defaults to
-`write`. Only `sendEmail` needed an explicit tier among the built-ins.
+`write`. `sendEmail` and `yt-transcripts`' `fetchTranscript` both need an
+explicit tier: `sendEmail` because it's irreversible/external-side-effect,
+and `fetchTranscript` because `publicSafe: true` would otherwise default it
+to `read` even though it writes a document (see above).
 
 Because permission gating filters `tools/list` itself (not just tool
-execution), a token granted only `mcp.read` gets a genuinely browse-only
-surface — the write and destructive tools are invisible to it, not merely
-unusable.
+execution), a token granted only `mcp.read` cannot see or invoke the write
+and destructive tools. This still depends on every tool author setting
+`access`/`publicSafe` correctly — `publicSafe` describes "safe to expose to
+anonymous public chat," not "does not write," so a `publicSafe` tool that
+mutates data (like `fetchTranscript`) must still declare `access: 'write'`
+explicitly. `mcp.read` is a permission boundary enforced by the tier a tool
+declares, not an automatic guarantee that every `read`-tiered tool is
+side-effect-free — treat it as browse-only for the built-ins, which are
+audited, and verify third-party/plugin tools individually before trusting
+the same claim for them.
 
 ### Registering the actions
 
