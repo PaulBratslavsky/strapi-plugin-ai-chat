@@ -45,30 +45,5 @@ export default {
         policies: [],
       },
     },
-    {
-      method: 'POST',
-      path: '/mcp',
-      handler: 'mcp.handle',
-      config: {
-        policies: [],
-        middlewares: ['plugin::ai-sdk.guardrail'],
-      },
-    },
-    {
-      method: 'GET',
-      path: '/mcp',
-      handler: 'mcp.handle',
-      config: {
-        policies: [],
-      },
-    },
-    {
-      method: 'DELETE',
-      path: '/mcp',
-      handler: 'mcp.handle',
-      config: {
-        policies: [],
-      },
-    },
   ],
 };

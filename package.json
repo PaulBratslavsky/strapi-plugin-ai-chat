@@ -47,13 +47,11 @@
     "test:api": "npx tsx tests/ai-sdk.test.ts",
     "test:stream": "node tests/test-stream.mjs",
     "test:chat": "node tests/test-chat.mjs",
-    "test:guardrails": "npx tsx tests/test-guardrails.ts",
-    "test:mcp": "npx tsx tests/mcp.test.ts"
+    "test:guardrails": "npx tsx tests/test-guardrails.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.15",
     "@ai-sdk/react": "^3.0.41",
-    "@modelcontextprotocol/sdk": "^1.26.0",
     "@strapi/design-system": "^2.0.0-rc.30",
     "@strapi/icons": "^2.0.0-rc.30",
     "ai": "^6.0.39",
@@ -102,9 +100,5 @@
   "homepage": "https://github.com/PaulBratslavsky/strapi-plugin-ai-sdk#readme",
   "bugs": {
     "url": "https://github.com/PaulBratslavsky/strapi-plugin-ai-sdk/issues"
-  },
-  "bundleDependencies": [
-    "@modelcontextprotocol/sdk",
-    "zod"
-  ]
+  }
 }

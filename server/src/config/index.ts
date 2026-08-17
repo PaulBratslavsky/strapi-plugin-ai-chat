@@ -8,11 +8,6 @@ export default {
     maxOutputTokens: 8192,
     maxConversationMessages: 15,
     maxSteps: 10,
-    mcp: {
-      sessionTimeoutMs: 4 * 60 * 60 * 1000,
-      maxSessions: 100,
-      cleanupInterval: 100,
-    },
     guardrails: {
       enabled: true,
       maxInputLength: 10000,

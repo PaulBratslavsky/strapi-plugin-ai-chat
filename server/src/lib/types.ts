@@ -1,6 +1,4 @@
 import type { ModelMessage, ToolSet, StopCondition } from 'ai';
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import type { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { AIProvider } from './ai-provider';
 import type { ToolRegistry } from './tool-registry';
 import type { GuardrailConfig } from '../guardrails/types';
@@ -100,15 +98,7 @@ export function isPromptInput(input: GenerateInput): input is PromptInput {
 
 // --- Plugin instance types (shared across bootstrap, destroy, controllers) ---
 
-export interface MCPSession {
-  server: Server;
-  transport: StreamableHTTPServerTransport;
-  createdAt: number;
-}
-
 export interface PluginInstance {
   aiProvider?: AIProvider;
   toolRegistry?: ToolRegistry;
-  createMcpServer?: (() => Server) | null;
-  mcpSessions?: Map<string, MCPSession> | null;
 }

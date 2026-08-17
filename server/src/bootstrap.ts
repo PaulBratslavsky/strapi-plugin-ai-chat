@@ -1,6 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { createMcpServer } from './mcp/server';
+import { registerAiSdkMcpTools } from './mcp';
 import { AIProvider } from './lib/ai-provider';
 import { ToolRegistry } from './lib/tool-registry';
 import { builtInTools } from './tools/definitions';
@@ -8,7 +8,7 @@ import type { PluginConfig, PluginInstance } from './lib/types';
 
 const PLUGIN_ID = 'ai-sdk';
 
-const bootstrap = ({ strapi }: { strapi: Core.Strapi }) => {
+const bootstrap = async ({ strapi }: { strapi: Core.Strapi }) => {
   const plugin = strapi.plugin(PLUGIN_ID) as unknown as PluginInstance;
   const config = strapi.config.get<PluginConfig>(`plugin::${PLUGIN_ID}`);
 
@@ -16,9 +16,7 @@ const bootstrap = ({ strapi }: { strapi: Core.Strapi }) => {
   const registry = initializeToolRegistry(plugin);
   discoverPluginTools(strapi, registry);
 
-  plugin.createMcpServer = () => createMcpServer(strapi);
-  plugin.mcpSessions = new Map();
-  strapi.log.info(`[${PLUGIN_ID}] MCP endpoint available at: /api/${PLUGIN_ID}/mcp`);
+  await registerAiSdkMcpTools(strapi, registry);
 };
 
 export default bootstrap;
