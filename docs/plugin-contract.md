@@ -89,6 +89,26 @@ active — read §7 before assuming this replaces routing hints.
 `getMeta()` is only recorded if the plugin registered at least one tool
 successfully **and** both `label` and `description` are present.
 
+### Failure isolation is two-layered
+
+The skip-and-warn behavior above (discovery time, in `bootstrap.ts`) has a
+counterpart at MCP-registration time, in `server/src/mcp/`:
+
+- **Per-tool** (`register-tools.ts`): each tool's `mcp.registerTool()` call
+  is individually wrapped in try/catch — one tool failing (e.g. a name
+  collision with a Strapi-derived built-in) is skipped with a warning; the
+  rest still register.
+- **Whole-pass** (`mcp/index.ts`): `registerAiSdkMcpTools()` wraps admin
+  permission registration, tool registration, and resource registration in
+  one outer try/catch. An unexpected throw anywhere in that block is caught,
+  logged at `strapi.log.error`, and **not rethrown** — Strapi still finishes
+  booting; only MCP capability registration is affected. This outer catch is
+  not transactional: tools already registered via `mcp.registerTool()`
+  before a later failure stay registered.
+
+Full detail, including why the outer catch isn't transactional:
+[`architecture.md`](./architecture.md#mcp-server).
+
 ---
 
 ## 3. The `ToolDefinition` interface

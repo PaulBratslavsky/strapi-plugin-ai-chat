@@ -92,7 +92,7 @@ graph TB
     Avatar -.->|"animation triggers"| UI
 ```
 
-Note: MCP requests to `/mcp` do **not** pass through the guardrail middleware — that route belongs to Strapi's own MCP service, not to this plugin's routes. Guardrails only cover this plugin's own endpoints (`/ask`, `/ask-stream`, `/chat`, `/public-chat`).
+Note: MCP requests to `/mcp` do **not** pass through the guardrail middleware — that route belongs to Strapi's own MCP service, not to this plugin's routes. Guardrails effectively cover `/ask`, `/ask-stream`, and `/chat`. `/public-chat` has the guardrail middleware attached in its route config but, due to a gap in the current input-extraction logic, its requests are not actually screened — see [`docs/guardrails.md`](./guardrails.md#overview).
 
 ---
 
@@ -250,7 +250,7 @@ export default {
 
 ### Guardrails Middleware
 
-The guardrail middleware intercepts all AI requests before they reach the controller. It runs as a Strapi route middleware registered on this plugin's own AI endpoints (`/ask`, `/ask-stream`, `/chat`, `/public-chat`). It does **not** run on `/mcp` — that route is owned by Strapi's own MCP service, not by this plugin, so MCP tool calls bypass the guardrail middleware entirely.
+The guardrail middleware intercepts AI requests before they reach the controller. It runs as a Strapi route middleware registered on `/ask`, `/ask-stream`, `/chat`, and `/public-chat`. It does **not** run on `/mcp` — that route is owned by Strapi's own MCP service, not by this plugin, so MCP tool calls bypass the guardrail middleware entirely. Separately, `/public-chat` requests, despite carrying the middleware, are not actually screened by it due to a gap in the current input-extraction logic (it only recognizes an exact `/chat` path suffix, `/ask`, and `/ask-stream`) — see [`docs/guardrails.md`](./guardrails.md#overview) for the full explanation. Both gaps are real, current behavior, not documentation errors.
 
 ```mermaid
 graph LR
@@ -605,6 +605,27 @@ sequenceDiagram
   error for any result whose doubled wire size (content + structuredContent)
   would exceed ~1&nbsp;MB, since MCP clients reject oversized results with an
   opaque, unactionable error.
+
+**Failure isolation is two-layered** (`server/src/mcp/index.ts` and
+`server/src/mcp/register-tools.ts`):
+- **Inner layer (per tool):** the note in the diagram above — each tool's
+  `mcp.registerTool()` call is individually wrapped in try/catch inside
+  `registerToolsOnMcp()`'s loop. One tool's registration failing (e.g. a name
+  collision with a Strapi-derived built-in) logs a warning and skips just
+  that tool; the loop continues to the next one.
+- **Outer layer (whole pass):** `registerAiSdkMcpTools()` wraps
+  `registerMcpAdminPermissions()`, `registerToolsOnMcp()`, and
+  `registerResourcesOnMcp()` in a single try/catch. If anything in that
+  block throws unexpectedly — e.g. the admin permission service throws, or
+  resource registration fails — it's caught, logged at `strapi.log.error`,
+  and **not rethrown**. `bootstrap()` returns normally and Strapi finishes
+  booting successfully; only MCP capability registration is affected, never
+  the rest of the plugin or the host app. This outer catch is **not
+  transactional**: if the tool-registration loop already called
+  `mcp.registerTool()` for some tools before a later step throws (e.g.
+  `registerResourcesOnMcp()` fails after tools succeeded), those
+  already-registered tools stay registered — the catch only stops whatever
+  ran after the throw point, it doesn't undo prior side effects.
 
 ---
 

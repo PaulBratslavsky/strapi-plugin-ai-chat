@@ -548,9 +548,23 @@ backward-compatible shim — this was a hard cutover, not a gradual migration.
    schema in `jsonCoercible()` yourself — see
    [`docs/plugin-contract.md`](./docs/plugin-contract.md#jsoncoercible--opting-an-arrayobject-param-into-json-string-tolerance).
 
+5. **MCP tool calls stopped being guardrail-screened.** Before `v1.1.0`,
+   `POST /api/ai-sdk/mcp` carried this plugin's own guardrail middleware, so
+   MCP tool-call arguments were checked against the same prompt-injection /
+   jailbreak / destructive-command patterns as chat and `/ask` traffic. As of
+   `v1.1.0`, `/mcp` is served by Strapi core — this plugin has no route or
+   controller there, so there is nothing to attach a middleware to. **This
+   protection is genuinely gone, with no config flag to restore it.** The
+   admin-token authentication and `plugin::ai-sdk.mcp.read`/`.write`/`.destructive`
+   permission tiers are real mitigations, but they gate *who can call which
+   tools*, not *what a call's arguments contain* — they are not a substitute
+   for content screening. See
+   [`docs/guardrails.md`](./docs/guardrails.md#mcp-tool-calls-are-not-guardrail-screened)
+   for the full explanation.
+
 ## Guardrails
 
-The plugin includes a guardrail middleware that checks all user input before it reaches the AI. It runs on this plugin's own AI endpoints (`/ask`, `/ask-stream`, `/chat`, `/public-chat`). It does **not** run on `/mcp` — that endpoint is served by Strapi itself, not by this plugin's routes, so MCP tool calls are not guardrail-checked.
+The plugin includes a guardrail middleware that checks user input before it reaches the AI. It runs on `/ask`, `/ask-stream`, and `/chat`. It does **not** run on `/mcp` — that endpoint is served by Strapi itself, not by this plugin's routes, so MCP tool calls are not guardrail-checked. `/public-chat` is also configured with the guardrail middleware but, due to a gap in the current input-extraction logic, its requests are not actually screened either — see [`docs/guardrails.md`](./docs/guardrails.md#overview) for the details of both gaps.
 
 ### What It Catches
 
