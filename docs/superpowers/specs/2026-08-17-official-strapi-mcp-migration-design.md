@@ -2,16 +2,20 @@
 
 **Status:** Approved, not yet implemented
 **Date:** 2026-08-17
-**Scope:** `strapi-plugin-ai-sdk`, `strapi-plugin-ai-sdk-yt-embeddings`,
-`strapi-plugin-ai-sdk-yt-transcripts`, plus the `strapi-local` and
-`strapi-prod` host apps.
+**Scope:** the three packages under `/Users/paul/work/plugin-dev/ai-sdk-plugins`
+— `strapi-plugin-ai-sdk`, `strapi-plugin-ai-sdk-yt-embeddings`,
+`strapi-plugin-ai-sdk-yt-transcripts`. No files outside that folder are
+modified.
 
 ## Summary
 
 Replace `strapi-plugin-ai-sdk`'s hand-rolled MCP server with the official
-Strapi MCP server (built into Strapi 5.47+), and prove the three plugins
-work together end to end before publishing them and rolling them to
-production.
+Strapi MCP server (built into Strapi 5.47+), and prove the three plugins work
+together end to end.
+
+Delivery stops at a reviewed branch in each of the three repos. Version numbers
+are set in `package.json`, but nothing is published to npm and no host app is
+touched.
 
 The plugin stops owning transport, sessions, auth, and schema conversion.
 It keeps its `ToolRegistry` — which the admin chat, the public widget chat,
@@ -67,14 +71,22 @@ Three seams break silently today because nothing tests them:
 3. The `__` namespacing that turns `searchYtKnowledge` into
    `ai_sdk_yt_embeddings__search_yt_knowledge`
 
-### Hosts
+### Test host (external prerequisite)
 
-| App | Strapi | Plugins | Notes |
-|---|---|---|---|
-| `strapi-local` | 5.39.0 | Source-linked via `resolve: "../ai-sdk-plugins/..."` | Also hosts 6 unrelated plugins. E2E host. |
-| `strapi-prod` | 5.33.1 | From npm: `ai-sdk ^0.10.0`, `yt-embeddings 0.3.0`, `yt-transcripts 1.0.3` | Strapi Cloud. Also runs `ocyris-strapi-builder-mcp`. |
+`strapi-local` is the E2E host. It sits outside this scope and is **not**
+modified by this work; the following are prerequisites the maintainer performs
+before phase 2 can run:
 
-Both are below the 5.47 floor and neither sets `mcp: { enabled: true }`.
+| Prerequisite | Current state |
+|---|---|
+| Strapi `>= 5.47` | on 5.39.0 — needs upgrading |
+| `mcp: { enabled: true }` in `config/server.ts` | absent |
+| An admin API token for the suite | not yet minted |
+| The three plugins source-linked | already wired via `resolve: "../ai-sdk-plugins/..."` |
+
+Note that strapi-local also hosts six unrelated plugins, so its Strapi upgrade
+may surface breakage beyond these three. That is the maintainer's call, not
+part of this work.
 
 ## Key finding: Strapi supports Zod 4
 
@@ -138,8 +150,8 @@ description before it reached the client. This design imports `zod` directly.
 | 6 | External services | Two tiers: structural by default, live opt-in |
 | 7 | Suite location | `strapi-plugin-ai-sdk` (the hub) |
 | 8 | Alignment | Peer deps, compat check, lockstep versions, one contract doc |
-| 9 | Prod upgrade | In scope, planned and executed end to end |
-| 10 | Versions | All three released as `1.1.0` |
+| 9 | Delivery | Stops at a reviewed branch; no npm publish, no host changes |
+| 10 | Versions | All three set to `1.1.0` in `package.json`, unpublished |
 
 ## Architecture
 
@@ -384,8 +396,9 @@ tool-registration time with an opaque error.
 ### Versions
 
 Current: ai-sdk `0.11.0`, yt-embeddings `0.3.0`, yt-transcripts `1.0.3`.
-Lockstep must clear the highest, so all three release as **`1.1.0`**. The minor
-bump signals the new Strapi floor and the MCP transport change.
+Lockstep must clear the highest, so all three are set to **`1.1.0`**. The minor
+bump signals the new Strapi floor and the MCP transport change. The numbers are
+written into `package.json`; publishing is out of scope.
 
 ### Contract documentation
 
@@ -441,7 +454,7 @@ Tier 1 gates every change.
    occurred
 6. Teardown: delete the transcript document and its embedding rows
 
-Tier 2 runs before publishing.
+Tier 2 runs before the branch is handed over for review.
 
 ### Retained tests
 
@@ -452,7 +465,9 @@ they are the regression net proving the registry swap did not disturb chat.
 `tests/mcp.test.ts` is rewritten against `/mcp` with an admin token and folded
 into tier 1.
 
-## Release path
+## Delivery path
+
+Three phases, all confined to the three plugin packages.
 
 ### Phase 0 — Alignment
 
@@ -466,52 +481,43 @@ The ai-sdk MCP swap: delete the old stack, add the bridge, permissions, access
 tiers, size guard, and resource. Add schema-level arg coercion to replace
 `coerceArgs`. Add the `access` field to `ToolDefinition`.
 
-### Phase 2 — strapi-local and E2E
+### Phase 2 — E2E
 
-Upgrade strapi-local 5.39 → 5.48. Add `mcp: { enabled: true }` to
-`config/server.ts`. Mint an admin API token. Build and link all three plugins.
-Write and run tier 1, then tier 2. Fix what they find.
+Build and link all three plugins into strapi-local. Write and run tier 1, then
+tier 2. Fix what they find.
 
-Exit: both tiers green, chat tests green.
+Depends on the strapi-local prerequisites above being in place. If the host is
+not yet on 5.47+ with MCP enabled, phase 2 blocks; phases 0 and 1 do not.
 
-### Phase 3 — Publish
+Exit: both tiers green, existing chat tests green and unmodified.
 
-Build and verify all three. Publish `1.1.0` for each to npm.
+### Done
 
-### Phase 4 — strapi-prod
-
-Sequenced as **two deploys**, so a failure is attributable:
-
-**4a — Strapi upgrade only.** Back up. Upgrade 5.33.1 → 5.48. Bump `engines` to
-node `>=20.0.0 <=24.x.x`. Verify `ocyris-strapi-builder-mcp` still loads and
-does not collide with the official server. Deploy to Strapi Cloud. Soak.
-
-**4b — Plugin cutover.** Bump the three plugin deps to `1.1.0`. Add
-`mcp: { enabled: true }` to `config/server.ts`. Mint a prod admin token. Deploy.
-Smoke-test `/mcp`: `tools/list`, one read tool, one write tool.
+Each of the three repos has a reviewed branch with its changes and its version
+set to `1.1.0`. Publishing and any host-app rollout are the maintainer's, on
+their own schedule.
 
 ## Risks
 
-1. **Production upgrade spans 15 minor versions** (5.33.1 → 5.48) on a live
-   Strapi Cloud app. Mitigated by splitting phase 4 into two deploys and
-   soaking between them, so a regression points at either the framework or the
-   plugins, not both.
-2. **`ocyris-strapi-builder-mcp` is an unknown.** If it registers on the
-   official server, tool names may collide. Checked in phase 4a before the
-   plugin cutover.
-3. **Lost server instructions** may measurably degrade Claude Desktop's
-   tool-loading behavior. Only observable after phase 4b. If it bites, the
-   fallback is richer tool descriptions plus an upstream feature request.
-4. **`strapi-local` is shared with 6 unrelated plugins.** Upgrading it to 5.48
-   may surface breakage in those. That breakage is out of scope for this work,
-   but it can block phase 2 — budget for it.
-5. **Node version floor.** Strapi 5.48 requires node `>=20`. Confirm the Strapi
-   Cloud runtime satisfies this before phase 4a.
+1. **Phase 2 depends on an external prerequisite.** The strapi-local upgrade to
+   5.47+ is outside this scope, and that app hosts six unrelated plugins whose
+   breakage could stall it. Phases 0 and 1 are independent and can complete
+   regardless, so this delays verification rather than the work itself.
+2. **Lost server instructions** may measurably degrade Claude Desktop's
+   tool-loading behavior. Not observable until the plugins run against a real
+   client. If it bites, the fallback is richer tool descriptions plus an
+   upstream feature request.
+3. **No integration test covers publish-time packaging.** The E2E suite runs
+   against source-linked plugins, so a `files` / `exports` regression in
+   `package.json` would not surface until publish. Mitigated by running
+   `strapi-plugin verify` on all three in phase 0.
 
 ## Out of scope
 
+- Publishing any package to npm
+- Any change to `strapi-local` or `strapi-prod`, including their Strapi
+  upgrades, MCP config, and deployment
 - Tightening per-tool output schemas beyond `LOOSE_OUTPUT`
 - Exposing the memory / notes / task tools over MCP
 - Fixing music-kb's dropped `.describe()` text
-- Migrating the other Strapi plugins in `strapi-local`
 - Any change to the two `-yt-*` plugins' tool logic or service contracts
