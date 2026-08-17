@@ -39,10 +39,87 @@ function toolNamed(prefix: string, suffix: string): string {
   return match;
 }
 
+const TRANSCRIPT_UID = 'plugin::ai-sdk-yt-transcripts.transcript';
+
+/**
+ * Mirrors @strapi/content-manager's internal `slugifyUidForMcpToolName`
+ * (server/mcp/utils.js — not a public export, so replicated rather than
+ * deep-imported). For a `plugin::` uid it lowercases the namespace, splits
+ * the model name on '.', and joins with '_':
+ *   plugin::ai-sdk-yt-transcripts.transcript -> plugin-ai-sdk-yt-transcripts_transcript
+ */
+function slugifyContentTypeUid(uid: string): string {
+  const [namespace, modelName] = uid.split('::');
+  const parts = modelName.split('.').map((part) => part.toLowerCase());
+  if (namespace === 'api') return parts[0];
+  return `${namespace.toLowerCase()}-${parts.join('_')}`;
+}
+
+const TRANSCRIPT_SLUG = slugifyContentTypeUid(TRANSCRIPT_UID);
+
+/**
+ * Delete any existing transcript row(s) for VIDEO_ID via the content-manager
+ * derived `list_<slug>` / `delete_<slug>` MCP tools.
+ *
+ * Why this exists (do not remove as "redundant" — see the review that added
+ * it): `fetchTranscript` caches — if a transcript for this videoId already
+ * exists it returns the cached row WITHOUT calling `documents(...).create()`.
+ * The yt-embeddings auto-embed hook subscribes to `afterCreate` ONLY. So on
+ * every run after the first, no create fires, the hook never runs, and the
+ * "auto-embeds" assertion below would pass purely because a stale embedding
+ * row from a previous run is still in the database — even if the hook is
+ * completely broken. Deleting the transcript first forces a genuine
+ * create -> afterCreate -> embed cycle every run. (The embeddings side needs
+ * no separate cleanup: `embedTranscript` already deletes-and-reinserts any
+ * existing `yt_videos` row for the videoId before writing, so it self-heals
+ * once the create fires again.)
+ *
+ * This runs in beforeAll, not just afterAll — afterAll is skipped whenever a
+ * test crashes mid-run, so it cannot guarantee the fresh-start precondition
+ * the way beforeAll can.
+ *
+ * If the content-manager tools aren't available (e.g. the admin token lacks
+ * content-manager read/delete permissions on the Transcript content type, or
+ * the content type isn't registered as visible), this throws rather than
+ * silently letting the suite run against stale data — a loud failure here is
+ * more honest than a green run that no longer proves the hook fires.
+ */
+async function deleteExistingTranscript(): Promise<void> {
+  const listName = `list_${TRANSCRIPT_SLUG}`;
+  const deleteName = `delete_${TRANSCRIPT_SLUG}`;
+
+  if (!tools[listName] || !tools[deleteName]) {
+    throw new Error(
+      `Cannot guarantee a fresh run: content-manager tools "${listName}" / "${deleteName}" ` +
+        `are not exposed to this MCP session. This suite cannot prove the yt-embeddings ` +
+        `lifecycle hook fires without deleting any pre-existing transcript for ${VIDEO_ID} first ` +
+        `(fetchTranscript is cache-and-return-early, and the auto-embed hook only fires on ` +
+        `afterCreate). Grant the admin token content-manager read + delete permissions on the ` +
+        `Transcript content type (${TRANSCRIPT_UID}), or confirm it is still visible to ` +
+        `content-manager, then rerun. Refusing to proceed against unverified state. ` +
+        `Available tools: ${Object.keys(tools).join(', ')}`,
+    );
+  }
+
+  const listResult: any = await client.callTool({
+    name: listName,
+    arguments: { filters: { videoId: VIDEO_ID } },
+  });
+  const existing: Array<{ documentId: string }> = listResult?.structuredContent?.results ?? [];
+
+  for (const doc of existing) {
+    await client.callTool({
+      name: deleteName,
+      arguments: { documentId: doc.documentId },
+    });
+  }
+}
+
 describe.skipIf(!live)('live transcript to embeddings pipeline', () => {
   beforeAll(async () => {
     client = await connect();
     tools = await toolMap(client);
+    await deleteExistingTranscript();
   });
 
   afterAll(async () => {

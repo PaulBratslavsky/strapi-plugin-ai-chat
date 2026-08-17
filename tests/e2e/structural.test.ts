@@ -36,7 +36,19 @@ describe('tool exposure', () => {
   });
 
   it('does not expose internal chat-only tools', () => {
-    for (const name of ['save_memory', 'recall_memories', 'save_note', 'manage_task']) {
+    // All 6 tools marked `internal: true` in server/src/tools/definitions/:
+    // save-memory, recall-memories, recall-public-memories, manage-task,
+    // save-note, recall-notes. Checking all six (not a subset) catches a
+    // leak of e.g. recall_public_memories or recall_notes onto MCP that a
+    // partial list would miss.
+    for (const name of [
+      'save_memory',
+      'recall_memories',
+      'recall_public_memories',
+      'manage_task',
+      'save_note',
+      'recall_notes',
+    ]) {
       expect(tools).not.toHaveProperty(name);
     }
   });
