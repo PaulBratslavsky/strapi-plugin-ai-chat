@@ -1,5 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import type { z } from 'zod';
+import type { AccessTier } from '../mcp/access';
 
 export interface ToolContext {
   adminUserId?: number;
@@ -15,6 +16,12 @@ export interface ToolDefinition {
   internal?: boolean;
   /** If true, tool is safe for unauthenticated public chat (read-only) */
   publicSafe?: boolean;
+  /**
+   * MCP permission tier. Defaults to 'read' when publicSafe is true,
+   * otherwise 'write'. Set explicitly for tools whose risk does not match
+   * that default — e.g. irreversible or external-side-effect tools.
+   */
+  access?: AccessTier;
 }
 
 /** Type alias for external plugin authors to import when contributing tools */
