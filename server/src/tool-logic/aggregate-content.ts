@@ -1,5 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import { z } from 'zod';
+import { jsonCoercible } from '../lib/json-coercible';
 import { resolveFieldPath } from './schema-utils';
 import type { ResolvedField } from './schema-utils';
 
@@ -15,8 +16,7 @@ export const aggregateContentSchema = z.object({
     .describe(
       'count — total count; countByField — group by a field; countByDateRange — bucket by date'
     ),
-  filters: z
-    .record(z.string(), z.unknown())
+  filters: jsonCoercible(z.record(z.string(), z.unknown()))
     .optional()
     .describe('Strapi filter object. Scalar: { title: { $containsi: "hello" } }. Relation: { author: { name: { $eq: "John" } } }. ManyToMany: { contentTags: { title: { $eq: "tutorial" } } }.'),
   groupByField: z

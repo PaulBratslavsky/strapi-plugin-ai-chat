@@ -1,5 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import { z } from 'zod';
+import { jsonCoercible } from '../lib/json-coercible';
 
 const MAX_PAGE_SIZE = 50;
 
@@ -15,12 +16,10 @@ export const searchContentSchema = z.object({
     .string()
     .optional()
     .describe('Full-text search query string (searches across all searchable text fields)'),
-  filters: z
-    .record(z.string(), z.unknown())
+  filters: jsonCoercible(z.record(z.string(), z.unknown()))
     .optional()
     .describe('Strapi filter object. Scalar: { title: { $containsi: "hello" } }. Relation: { author: { name: { $eq: "John" } } }. ManyToMany: { contentTags: { title: { $eq: "tutorial" } } }. Operators: $eq, $ne, $containsi, $in, $gt, $lt, $gte, $lte, $null, $notNull.'),
-  fields: z
-    .array(z.string())
+  fields: jsonCoercible(z.array(z.string()))
     .optional()
     .describe('Specific fields to return. If omitted, returns all fields (large content fields stripped unless includeContent is true).'),
   sort: z
@@ -41,8 +40,9 @@ export const searchContentSchema = z.object({
     .string()
     .optional()
     .describe('Locale code for i18n content, e.g. "en" or "fr"'),
-  populate: z
-    .union([z.string(), z.array(z.string()), z.record(z.string(), z.unknown())])
+  populate: jsonCoercible(
+    z.union([z.string(), z.array(z.string()), z.record(z.string(), z.unknown())]),
+  )
     .optional()
     .describe('Relations to populate. Defaults to "*" (all). Can be a string, array, or object.'),
   includeContent: z

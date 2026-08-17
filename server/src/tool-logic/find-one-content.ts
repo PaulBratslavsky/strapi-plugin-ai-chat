@@ -1,5 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import { z } from 'zod';
+import { jsonCoercible } from '../lib/json-coercible';
 
 export const findOneContentSchema = z.object({
   contentType: z
@@ -8,15 +9,15 @@ export const findOneContentSchema = z.object({
       'The content type UID to fetch from, e.g. "api::article.article"'
     ),
   documentId: z.string().describe('The document ID to retrieve'),
-  populate: z
-    .union([z.string(), z.array(z.string()), z.record(z.string(), z.unknown())])
+  populate: jsonCoercible(
+    z.union([z.string(), z.array(z.string()), z.record(z.string(), z.unknown())]),
+  )
     .optional()
     .default('*')
     .describe(
       'Relations to populate. Defaults to "*" (all). Can be a string, array, or object.'
     ),
-  fields: z
-    .array(z.string())
+  fields: jsonCoercible(z.array(z.string()))
     .optional()
     .describe('Specific fields to return. If omitted, returns all fields.'),
   status: z
