@@ -37,35 +37,30 @@ The plugin has these HTTP entry points for user input:
 |---|---|---|
 | Admin chat | `POST /ai-sdk/chat` | Strapi admin panel |
 | Content API | `POST /api/ai-sdk/ask`, `/ask-stream`, `/chat` | Frontend apps |
+| Public widget | `POST /api/ai-sdk/public-chat` | Embeddable, unauthenticated chat widget |
 
-`POST /api/ai-sdk/public-chat` (the public widget) also has
-`plugin::ai-sdk.guardrail` attached in its route config, but see the callout
-below — attaching the middleware is not the same as it actually screening
-that route's input.
+`POST /api/ai-sdk/public-chat` is screened using the same extraction logic
+as `/chat` (both consume `{ messages: UIMessage[] }`), but is labelled with
+its own `route: 'public-chat'` so logging/telemetry can distinguish the
+public surface from the authenticated admin/frontend one.
 
 Without guardrails, a malicious or careless prompt could manipulate the AI into misusing tools -- for example, deleting all content or leaking system prompt details.
 
 The guardrail middleware intercepts requests at these entry points, checks user input against configurable rules, and blocks or allows before it reaches the AI.
 
-> **Two known gaps, verified against the current source (`server/src/guardrails/index.ts`):**
+> **One known gap, verified against the current source (`server/src/guardrails/index.ts`):**
 >
-> 1. **MCP tool calls are not covered.** As of `v1.1.0`, MCP is served by
->    Strapi's own official MCP server at `/mcp` — this plugin has no route or
->    controller there for a middleware to attach to. See
->    [MCP Tool Calls Are Not Guardrail-Screened](#mcp-tool-calls-are-not-guardrail-screened)
->    below.
-> 2. **`/public-chat` is wired to the guardrail middleware but not actually
->    screened.** `extractUserInput()` only recognizes paths ending in `/chat`
->    (an exact `/chat` suffix), `/ask`, and `/ask-stream`. `/public-chat` ends
->    in `-chat`, not `/chat`, so it falls through to `return null` and the
->    middleware calls `next()` immediately — the **public, unauthenticated**
->    widget endpoint currently receives no prompt-injection screening at all,
->    despite its route config listing `middlewares: ['plugin::ai-sdk.guardrail']`.
->    This is a source-code bug, not something this documentation pass can fix
->    (documentation-only scope) — it is called out here so it isn't mistaken
->    for working coverage. `tests/test-guardrails.ts` does not currently
->    exercise `/public-chat`, which is presumably why this has gone
->    unnoticed.
+> **MCP tool calls are not covered.** As of `v1.1.0`, MCP is served by
+> Strapi's own official MCP server at `/mcp` — this plugin has no route or
+> controller there for a middleware to attach to. See
+> [MCP Tool Calls Are Not Guardrail-Screened](#mcp-tool-calls-are-not-guardrail-screened)
+> below.
+>
+> A previous revision of this document also disclosed that `/public-chat`
+> carried the guardrail middleware without actually being screened by it.
+> That gap has since been fixed: `extractUserInput()` now has a dedicated
+> branch for `/public-chat`, so the public widget endpoint is screened the
+> same as `/chat`.
 
 ---
 
@@ -131,6 +126,7 @@ graph TB
     subgraph Entry["HTTP Entry Points"]
         Admin["Admin Chat<br/>POST /ai-sdk/chat"]
         API["Content API<br/>POST /api/ai-sdk/ask<br/>POST /api/ai-sdk/ask-stream<br/>POST /api/ai-sdk/chat"]
+        Public["Public Widget<br/>POST /api/ai-sdk/public-chat"]
     end
 
     subgraph Middleware["Guardrail Middleware"]
@@ -148,6 +144,7 @@ graph TB
 
     Admin --> Extract
     API --> Extract
+    Public --> Extract
     Extract --> Normalize
     Normalize --> Hook
     Hook -->|"blocked"| Block
@@ -165,7 +162,7 @@ graph TB
 
 ### Request Pipeline
 
-The guardrail runs as a **Strapi route middleware**. Its route config lists it on `/ask`, `/ask-stream`, `/chat`, and `/public-chat` — but the input-extraction step only actually recognizes `/ask`, `/ask-stream`, and `/chat` (see the gap noted in [Overview](#overview)); `/public-chat` requests pass through unscreened. It is not registered at all on `/mcp`, which this plugin does not own (see [MCP Tool Calls Are Not Guardrail-Screened](#mcp-tool-calls-are-not-guardrail-screened)). In Strapi v5, the execution order is:
+The guardrail runs as a **Strapi route middleware**. Its route config lists it on `/ask`, `/ask-stream`, `/chat`, and `/public-chat`, and the input-extraction step recognizes all four — `/public-chat` uses the same extraction logic as `/chat`, labelled `route: 'public-chat'`. It is not registered at all on `/mcp`, which this plugin does not own (see [MCP Tool Calls Are Not Guardrail-Screened](#mcp-tool-calls-are-not-guardrail-screened)). In Strapi v5, the execution order is:
 
 ```mermaid
 graph LR
@@ -210,29 +207,29 @@ The middleware adapts to each request shape automatically:
 ```mermaid
 graph TB
     Request["Incoming Request"] --> PathCheck{"Route path?"}
-    PathCheck -->|"/chat (exact suffix)"| ChatExtract["Extract last user message<br/>from messages[] array"]
+    PathCheck -->|"/chat or /public-chat"| ChatExtract["Extract last user message<br/>from messages[] array"]
     PathCheck -->|"/ask or /ask-stream"| AskExtract["Extract prompt field"]
-    PathCheck -->|"anything else, incl. /public-chat"| NoMatch["No branch matches → return null<br/>→ middleware calls next() unscreened"]
+    PathCheck -->|"anything else"| NoMatch["No branch matches → return null<br/>→ middleware calls next() unscreened"]
 
     ChatExtract --> UIFormat{"Message format?"}
     UIFormat -->|"parts[]"| Parts["Concatenate text parts"]
     UIFormat -->|"content string"| Content["Use content directly"]
 ```
 
-Only `/chat`, `/ask`, and `/ask-stream` reach a real extraction branch.
-`/mcp` never enters this plugin's route stack at all (see
-[MCP Tool Calls Are Not Guardrail-Screened](#mcp-tool-calls-are-not-guardrail-screened)).
-`/public-chat` **does** enter this middleware — its route config attaches
-`plugin::ai-sdk.guardrail` — but its path doesn't match any branch (it ends
-in `-chat`, not the exact `/chat` suffix the code checks), so
-`extractUserInput()` falls through to `return null` and the request is
-allowed through unscreened. See [Overview](#overview).
+`/chat`, `/public-chat`, `/ask`, and `/ask-stream` all reach a real
+extraction branch. `/mcp` never enters this plugin's route stack at all
+(see [MCP Tool Calls Are Not Guardrail-Screened](#mcp-tool-calls-are-not-guardrail-screened)).
+`/public-chat` reuses the exact extraction logic used for `/chat` — same
+`messages[]` parsing, same UIMessage/legacy-content handling — but is
+labelled with its own `route: 'public-chat'` value so blocked-response
+selection and any logging can distinguish the public surface from the
+authenticated one. See [Overview](#overview).
 
 | Route | Body Shape | Extracted Text |
 |---|---|---|
-| `/chat` | `{ messages: UIMessage[] }` | Last `role: 'user'` message -- concatenate text parts |
+| `/chat` | `{ messages: UIMessage[] }` | Last `role: 'user'` message -- concatenate text parts (`route: 'chat'`) |
+| `/public-chat` | `{ messages: UIMessage[] }` | Last `role: 'user'` message -- concatenate text parts (`route: 'public-chat'`) |
 | `/ask`, `/ask-stream` | `{ prompt: string }` | `prompt` field directly |
-| `/public-chat` | `{ messages: UIMessage[] }` | **None extracted — falls through to `null`, request passes unscreened** (see gap above) |
 
 ### Input Normalization
 
@@ -278,7 +275,7 @@ Each pattern is a regex string compiled with the `i` (case-insensitive) flag. Th
 
 When a request is blocked, the response format depends on the route:
 
-**Chat routes** (`/chat`) return an SSE stream with the blocked message, so the admin UI renders it as a normal assistant reply:
+**Chat routes** (`/chat` and `/public-chat`) return an SSE stream with the blocked message, so the admin UI (and the embeddable widget) render it as a normal assistant reply:
 
 ```
 data: {"type":"text-delta","delta":"I'm unable to process that request. It was flagged by content safety guardrails."}
@@ -474,7 +471,7 @@ graph TB
 
 The hook receives:
 - `text` -- the extracted user input
-- `route` -- `'chat'`, `'ask'`, or `'ask-stream'` (the hook never fires for `/public-chat` — that route's requests never reach pattern matching or the hook at all; see [Overview](#overview))
+- `route` -- `'chat'`, `'public-chat'`, `'ask'`, or `'ask-stream'`
 - `ctx` -- the full Koa context (access user, headers, etc.)
 
 ---

@@ -92,7 +92,7 @@ graph TB
     Avatar -.->|"animation triggers"| UI
 ```
 
-Note: MCP requests to `/mcp` do **not** pass through the guardrail middleware — that route belongs to Strapi's own MCP service, not to this plugin's routes. Guardrails effectively cover `/ask`, `/ask-stream`, and `/chat`. `/public-chat` has the guardrail middleware attached in its route config but, due to a gap in the current input-extraction logic, its requests are not actually screened — see [`docs/guardrails.md`](./guardrails.md#overview).
+Note: MCP requests to `/mcp` do **not** pass through the guardrail middleware — that route belongs to Strapi's own MCP service, not to this plugin's routes. Guardrails cover `/ask`, `/ask-stream`, `/chat`, and `/public-chat` — see [`docs/guardrails.md`](./guardrails.md#overview).
 
 ---
 
@@ -250,7 +250,7 @@ export default {
 
 ### Guardrails Middleware
 
-The guardrail middleware intercepts AI requests before they reach the controller. It runs as a Strapi route middleware registered on `/ask`, `/ask-stream`, `/chat`, and `/public-chat`. It does **not** run on `/mcp` — that route is owned by Strapi's own MCP service, not by this plugin, so MCP tool calls bypass the guardrail middleware entirely. Separately, `/public-chat` requests, despite carrying the middleware, are not actually screened by it due to a gap in the current input-extraction logic (it only recognizes an exact `/chat` path suffix, `/ask`, and `/ask-stream`) — see [`docs/guardrails.md`](./guardrails.md#overview) for the full explanation. Both gaps are real, current behavior, not documentation errors.
+The guardrail middleware intercepts AI requests before they reach the controller. It runs as a Strapi route middleware registered on `/ask`, `/ask-stream`, `/chat`, and `/public-chat`, and the input-extraction logic screens all four (`/public-chat` uses the same extraction as `/chat`, labelled `route: 'public-chat'`). It does **not** run on `/mcp` — that route is owned by Strapi's own MCP service, not by this plugin, so MCP tool calls bypass the guardrail middleware entirely — see [`docs/guardrails.md`](./guardrails.md#overview) for the full explanation.
 
 ```mermaid
 graph LR
@@ -263,7 +263,7 @@ graph LR
 
 **Pipeline steps (per request):**
 
-1. **Extract input** -- adapts to request shape (`messages[]`, `prompt`, JSON-RPC `params`)
+1. **Extract input** -- adapts to request shape (`messages[]` for `/chat` and `/public-chat`, `prompt` for `/ask` and `/ask-stream`)
 2. **Custom hook** -- `beforeProcess` runs first (if configured)
 3. **Normalize** -- NFKC, strip zero-width chars, collapse whitespace
 4. **Pattern match** -- regex patterns from `default-patterns.json` + user config
