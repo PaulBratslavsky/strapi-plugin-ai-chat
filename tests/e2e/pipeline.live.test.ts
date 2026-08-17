@@ -7,6 +7,14 @@
  * STRAPI_ADMIN_TOKEN, and E2E_LIVE=1 (see `npm run test:e2e:live`). Skipped
  * entirely otherwise. See tests/e2e/client.ts for the connect() helper and
  * its note on required permission tiers.
+ *
+ * The token needs MORE than client.ts's three `plugin::ai-sdk.mcp.*` tiers:
+ * the pre-run cleanup below (see `deleteExistingTranscript`) also calls the
+ * content-manager-derived list/delete tools for the Transcript content type
+ * (`plugin::ai-sdk-yt-transcripts.transcript`), which require
+ * content-manager READ and DELETE permissions on that content type. Without
+ * them, `findUniqueContentManagerTool` throws in `beforeAll` before any
+ * pipeline assertion runs.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -41,25 +49,48 @@ function toolNamed(prefix: string, suffix: string): string {
 
 const TRANSCRIPT_UID = 'plugin::ai-sdk-yt-transcripts.transcript';
 
-/**
- * Mirrors @strapi/content-manager's internal `slugifyUidForMcpToolName`
- * (server/mcp/utils.js — not a public export, so replicated rather than
- * deep-imported). For a `plugin::` uid it lowercases the namespace, splits
- * the model name on '.', and joins with '_':
- *   plugin::ai-sdk-yt-transcripts.transcript -> plugin-ai-sdk-yt-transcripts_transcript
- */
-function slugifyContentTypeUid(uid: string): string {
-  const [namespace, modelName] = uid.split('::');
-  const parts = modelName.split('.').map((part) => part.toLowerCase());
-  if (namespace === 'api') return parts[0];
-  return `${namespace.toLowerCase()}-${parts.join('_')}`;
-}
+// Content-manager derives its per-content-type tool names from this uid via
+// an internal, non-exported `slugifyUidForMcpToolName` — the exact slug is
+// not part of any public contract and has been observed to differ between
+// installed versions of @strapi/content-manager. Rather than replicate that
+// internal (and silently break when it changes), find the tool at runtime by
+// substring: whatever the slugging scheme, both the uid's namespace segment
+// (`ai-sdk-yt-transcripts`) and any plausible derived slug retain this
+// substring, and it does not collide with this plugin's own MCP tools (those
+// go through `toSnakeCase()`, which turns every hyphen into an underscore).
+const TRANSCRIPT_MATCH = 'ai-sdk-yt-transcripts';
 
-const TRANSCRIPT_SLUG = slugifyContentTypeUid(TRANSCRIPT_UID);
+/**
+ * Find exactly one tool name starting with `prefix` that identifies the
+ * yt-transcripts Transcript content type. Throws if none or more than one
+ * match — this cleanup step must never guess.
+ */
+function findUniqueContentManagerTool(prefix: string): string {
+  const candidates = Object.keys(tools).filter((n) => n.startsWith(prefix));
+  const matches = candidates.filter((n) => n.includes(TRANSCRIPT_MATCH));
+
+  if (matches.length === 1) return matches[0];
+
+  const reason = matches.length === 0 ? 'no match' : `ambiguous: ${matches.join(', ')}`;
+  throw new Error(
+    `Cannot guarantee a fresh run: could not uniquely identify the content-manager ` +
+      `"${prefix}*" tool for the Transcript content type (${TRANSCRIPT_UID}) — ${reason}. ` +
+      `This suite cannot prove the yt-embeddings lifecycle hook fires without deleting any ` +
+      `pre-existing transcript for ${VIDEO_ID} first (fetchTranscript is cache-and-return-early, ` +
+      `and the auto-embed hook only fires on afterCreate). Either the admin token lacks ` +
+      `content-manager read + delete permissions on the Transcript content type (needed in ` +
+      `addition to the three "plugin::ai-sdk.mcp.*" actions — see the header comment of this ` +
+      `file), the content type is no longer visible to content-manager, or its tool-naming ` +
+      `scheme changed in a way this substring match no longer captures. ` +
+      `Existing "${prefix}*" tools: ${candidates.join(', ') || '(none)'}. ` +
+      `Refusing to proceed against unverified state.`,
+  );
+}
 
 /**
  * Delete any existing transcript row(s) for VIDEO_ID via the content-manager
- * derived `list_<slug>` / `delete_<slug>` MCP tools.
+ * derived list/delete tools for the Transcript content type (found at
+ * runtime — see findUniqueContentManagerTool).
  *
  * Why this exists (do not remove as "redundant" — see the review that added
  * it): `fetchTranscript` caches — if a transcript for this videoId already
@@ -78,28 +109,15 @@ const TRANSCRIPT_SLUG = slugifyContentTypeUid(TRANSCRIPT_UID);
  * test crashes mid-run, so it cannot guarantee the fresh-start precondition
  * the way beforeAll can.
  *
- * If the content-manager tools aren't available (e.g. the admin token lacks
- * content-manager read/delete permissions on the Transcript content type, or
- * the content type isn't registered as visible), this throws rather than
+ * If the content-manager tools aren't available or can't be identified
+ * unambiguously (e.g. the admin token lacks content-manager read/delete
+ * permissions on the Transcript content type), this throws rather than
  * silently letting the suite run against stale data — a loud failure here is
  * more honest than a green run that no longer proves the hook fires.
  */
 async function deleteExistingTranscript(): Promise<void> {
-  const listName = `list_${TRANSCRIPT_SLUG}`;
-  const deleteName = `delete_${TRANSCRIPT_SLUG}`;
-
-  if (!tools[listName] || !tools[deleteName]) {
-    throw new Error(
-      `Cannot guarantee a fresh run: content-manager tools "${listName}" / "${deleteName}" ` +
-        `are not exposed to this MCP session. This suite cannot prove the yt-embeddings ` +
-        `lifecycle hook fires without deleting any pre-existing transcript for ${VIDEO_ID} first ` +
-        `(fetchTranscript is cache-and-return-early, and the auto-embed hook only fires on ` +
-        `afterCreate). Grant the admin token content-manager read + delete permissions on the ` +
-        `Transcript content type (${TRANSCRIPT_UID}), or confirm it is still visible to ` +
-        `content-manager, then rerun. Refusing to proceed against unverified state. ` +
-        `Available tools: ${Object.keys(tools).join(', ')}`,
-    );
-  }
+  const listName = findUniqueContentManagerTool('list_');
+  const deleteName = findUniqueContentManagerTool('delete_');
 
   const listResult: any = await client.callTool({
     name: listName,
