@@ -48,7 +48,7 @@ const guardrail = (
 
     const reason = result.reason ?? guardrailConfig?.blockedMessage ?? DEFAULT_BLOCKED_MESSAGE;
 
-    if (route === 'chat') {
+    if (route === 'chat' || route === 'public-chat') {
       respondWithChatMessage(ctx, reason);
     } else {
       ctx.status = 403;
