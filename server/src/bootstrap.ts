@@ -71,7 +71,8 @@ function discoverPluginTools(strapi: Core.Strapi, registry: ToolRegistry) {
       if (count > 0) {
         strapi.log.info(`[${PLUGIN_ID}] Registered ${count} tools from plugin: ${pluginName}`);
 
-        // Collect optional source metadata for MCP instructions
+        // Collect optional source metadata; it feeds the tool-guide MCP
+        // resource (see mcp/resources/tool-guide.ts), not server instructions.
         const safeName = pluginName.replace(/[^a-zA-Z0-9_-]/g, '_');
         if (typeof aiToolsService.getMeta === 'function') {
           const meta = aiToolsService.getMeta();

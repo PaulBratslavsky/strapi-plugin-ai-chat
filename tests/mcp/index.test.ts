@@ -40,4 +40,17 @@ describe('registerAiSdkMcpTools', () => {
     await expect(registerAiSdkMcpTools(strapi, buildRegistry())).resolves.toBeUndefined();
     expect(captured.tools).toHaveLength(0);
   });
+
+  it('resolves without throwing when registration fails outright', async () => {
+    const { strapi, captured } = createFakeStrapi();
+    // Force an unexpected throw early in the registration pass (e.g. the
+    // admin permission service being unavailable) — this must degrade to
+    // "MCP tools unavailable", never take Strapi's boot down with it.
+    (strapi as any).service = () => {
+      throw new Error('admin::permission service unavailable');
+    };
+
+    await expect(registerAiSdkMcpTools(strapi, buildRegistry())).resolves.toBeUndefined();
+    expect(captured.logs.some((l) => l.level === 'error')).toBe(true);
+  });
 });

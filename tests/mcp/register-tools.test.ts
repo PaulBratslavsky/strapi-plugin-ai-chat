@@ -127,4 +127,37 @@ describe('registerToolsOnMcp', () => {
     registerToolsOnMcp(strapi, registryWith(readTool));
     expect(captured.tools[0].title).toBe('Strapi: Search Content');
   });
+
+  it('skips a tool that fails to register and continues with the rest', () => {
+    // create_content is writeTool's derived MCP name — simulate the official
+    // server's capability registry rejecting it (e.g. a duplicate name
+    // collision with a content-manager-derived tool).
+    const { strapi, captured } = createFakeStrapi({ failToolNames: ['create_content'] });
+    const toolA = {
+      name: 'toolA',
+      description: 'A',
+      schema: z.object({}),
+      execute: async () => ({}),
+      publicSafe: true,
+    };
+    const toolC = {
+      name: 'toolC',
+      description: 'C',
+      schema: z.object({}),
+      execute: async () => ({}),
+      publicSafe: true,
+    };
+
+    const count = registerToolsOnMcp(strapi, registryWith(toolA, writeTool, toolC));
+
+    expect(count).toBe(2);
+    expect(captured.tools.map((t) => t.name).sort()).toEqual(['tool_a', 'tool_c']);
+
+    const warning = captured.logs.find(
+      (l) => l.level === 'warn' && l.message.includes('createContent'),
+    );
+    expect(warning).toBeDefined();
+    expect(warning?.message).toContain('create_content');
+    expect(warning?.message).toContain('already registered');
+  });
 });

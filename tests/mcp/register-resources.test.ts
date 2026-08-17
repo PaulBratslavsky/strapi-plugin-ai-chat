@@ -48,4 +48,32 @@ describe('registerResourcesOnMcp', () => {
     // generateToolGuide renders MCP-style snake_case names, not registry camelCase names.
     expect(result.contents[0].text).toContain('search_content');
   });
+
+  it('renders a plugin source label and description from getMeta() instead of the raw source id', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'yt__searchTranscripts',
+      description: 'Search video transcripts',
+      schema: z.object({ query: z.string() }),
+      execute: async () => ({}),
+      publicSafe: true,
+    });
+    registry.setSourceMeta('yt', {
+      label: 'YouTube Transcripts',
+      description: 'Search and summarize video transcripts.',
+      keywords: ['youtube', 'transcript'],
+    });
+
+    const { strapi, captured } = createFakeStrapi();
+    registerResourcesOnMcp(strapi, registry);
+
+    const handler = captured.resources[0].createHandler(strapi);
+    const result = await handler(new URL(TOOL_GUIDE_URI), {} as any);
+    const text: string = result.contents[0].text;
+
+    expect(text).toContain('YouTube Transcripts');
+    expect(text).toContain('Search and summarize video transcripts.');
+    expect(text).toContain('youtube, transcript');
+    expect(text).not.toContain('## yt\n');
+  });
 });

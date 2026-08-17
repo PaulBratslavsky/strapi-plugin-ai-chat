@@ -24,9 +24,19 @@ export async function registerAiSdkMcpTools(
     return;
   }
 
-  await registerMcpAdminPermissions(strapi);
-  const count = registerToolsOnMcp(strapi, registry);
-  registerResourcesOnMcp(strapi, registry);
+  // A failure anywhere in here (permission registration, an unexpected throw
+  // during tool/resource registration) must degrade to "MCP tools
+  // unavailable" — never "Strapi is down". registerToolsOnMcp already
+  // isolates per-tool failures; this is the outer backstop for everything
+  // else in the registration pass.
+  try {
+    await registerMcpAdminPermissions(strapi);
+    const count = registerToolsOnMcp(strapi, registry);
+    registerResourcesOnMcp(strapi, registry);
 
-  strapi.log.info(`[ai-sdk:mcp] Registered ${count} tool(s) on the official MCP server.`);
+    strapi.log.info(`[ai-sdk:mcp] Registered ${count} tool(s) on the official MCP server.`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    strapi.log.error(`[ai-sdk:mcp] Failed to register MCP capabilities: ${message}`);
+  }
 }
