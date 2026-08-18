@@ -56,9 +56,41 @@ ERR_PACKAGE_PATH_NOT_EXPORTED   (verified on Node 22.18.0 AND Node 24.16.0)
 ```
 
 Node's `require(esm)` support in 22.12+/23+ does not rescue this. Resolution fails *before*
-loading, because the `require` condition is absent from the `exports` map entirely.
+loading, because no condition matching a `require` exists in the `exports` map at all.
 
 **So the TanStack plugin build would fail at Strapi boot.** Not degrade — fail to load.
+
+### The cause is one missing line, not ESM (verified)
+
+It would be easy to conclude "ESM-only packages cannot work in CommonJS Strapi plugins."
+That is **wrong**, and the distinction decides how fixable this is.
+
+Controlled experiment — two packages, identical ESM source, differing *only* in their
+exports map:
+
+| package | `exports["."]` | `require()` on Node 22.18 & 24.16 |
+|---|---|---|
+| A | `types`, `import` | `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+| B | `types`, `import`, **`default`** | **OK** — loads and runs |
+
+Then the decisive test against the real package: patching **only** `@tanstack/ai`'s
+`package.json` to add one line —
+
+```json
+"default": "./dist/esm/index.js"
+```
+
+— makes `require('@tanstack/ai')` succeed from CommonJS on **both Node 22.18.0 and
+24.16.0**, returning all 122 symbols with `chat` and `toolDefinition` intact. No CJS build.
+No transpilation. No consumer-side change.
+
+So the accurate statement is not "TanStack is ESM-only and therefore incompatible." It is:
+**Node is willing to `require()` these packages; TanStack's exports map declines to let it.**
+Upgrading Node will never fix this — it is a publishing choice, not a runtime limitation,
+and the upstream fix is one line.
+
+Worth filing upstream. An `exports` map that omits both `require` and `default` excludes
+every CommonJS consumer — which, in the Node backend world, is still most of them.
 
 ### An audit gap worth stating plainly
 
@@ -191,12 +223,15 @@ the API.
   top-level `types` field, which is why the failures were confusing type mismatches rather
   than clean "cannot find module" errors.
 
-  The real ask is therefore twofold: a **CJS artifact** (today `dist/` is ESM-only) and a
-  **`require` condition** pointing at it. Both are conventional dual-package publishing; the
-  reference `@tanstack/config` Vite setup already documents an exports map with `import` and
-  `require` conditions and both `.d.ts` and `.d.cts` types. So this is an achievable ask of
-  the project, not a fundamental incompatibility — but it is theirs to make, not ours to
-  work around.
+  The real ask turned out to be **far smaller than a CJS build**: adding a `default` (or
+  `require`) condition to the existing exports map is sufficient, verified above. Node
+  loads the ESM entry through `require()` happily once the condition exists. A dual `.d.cts`
+  build — as the reference `@tanstack/config` Vite setup documents — would additionally fix
+  the *typing* side under `moduleResolution: "Node"`, but is not needed to make the runtime
+  work.
+
+  So: one line unblocks running it; a dual build unblocks typing it. Both are theirs to
+  make, not ours to work around — though see the demo note below, which does work around it.
 - `@tanstack/ai` reaches 1.0 with a stability commitment.
 - Strapi relaxes the CommonJS requirement for plugin server code.
 - Local-first Ollama inference becomes a hard requirement for the *plugins* (not just
