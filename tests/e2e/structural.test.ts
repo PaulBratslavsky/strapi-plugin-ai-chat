@@ -3,12 +3,15 @@
  *
  * Requires a running Strapi host (>= 5.47) with `mcp: { enabled: true }` and
  * an admin API token exported as STRAPI_ADMIN_TOKEN. The token must grant all
- * three `plugin::ai-sdk.mcp.*` permissions (read, write, destructive) — the
- * `EXPECTED_BUILTIN_TOOLS` list below includes `send_email`, which lives in
- * the `destructive` tier, and permission gating filters what `tools/list`
- * returns. A token missing any one of the three tiers will fail the
- * tool-exposure assertions below for the wrong reason (looks like a missing
- * tool, is actually a missing permission).
+ * four `plugin::ai-sdk.mcp.*` permissions (read, write, destructive,
+ * maintenance) — the `EXPECTED_BUILTIN_TOOLS` list below includes
+ * `send_email`, which lives in the `destructive` tier, and the
+ * yt-transcripts/yt-embeddings namespace counts below depend on
+ * `fetchTranscript` and `searchYtKnowledge`, which live in the `maintenance`
+ * tier. Permission gating filters what `tools/list` returns, so a token
+ * missing any one of the four tiers will fail the tool-exposure assertions
+ * below for the wrong reason (looks like a missing tool, is actually a
+ * missing permission).
  *
  * See tests/e2e/client.ts for the connect() helper.
  */
@@ -157,7 +160,7 @@ describe('cross-plugin wiring', () => {
 
 describe('permission scoping', () => {
   it.skipIf(!process.env.STRAPI_READONLY_TOKEN)(
-    'hides write and destructive tools from a read-only token',
+    'hides write, destructive, and maintenance tools from a read-only token',
     async () => {
       const readOnly = process.env.STRAPI_READONLY_TOKEN!;
 
@@ -167,6 +170,10 @@ describe('permission scoping', () => {
       expect(scopedTools).toHaveProperty('search_content');
       expect(scopedTools).not.toHaveProperty('create_content');
       expect(scopedTools).not.toHaveProperty('send_email');
+      // fetchTranscript and searchYtKnowledge moved from write/read into the
+      // maintenance tier — a read-only token must not see them either.
+      expect(scopedTools).not.toHaveProperty('ai_sdk_yt_transcripts__fetch_transcript');
+      expect(scopedTools).not.toHaveProperty('ai_sdk_yt_embeddings__search_yt_knowledge');
 
       await scoped.close();
     },

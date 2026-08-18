@@ -130,9 +130,11 @@ export interface ToolDefinition {
   /**
    * MCP permission tier. Defaults to 'read' when publicSafe is true,
    * otherwise 'write'. Set explicitly for tools whose risk does not match
-   * that default — e.g. irreversible or external-side-effect tools.
+   * that default — e.g. irreversible or external-side-effect tools, or
+   * tools that hit a paid external API per call and belong in
+   * 'maintenance' regardless of whether they mutate anything.
    */
-  access?: 'read' | 'write' | 'destructive';
+  access?: 'read' | 'write' | 'destructive' | 'maintenance';
 }
 ```
 
@@ -144,8 +146,10 @@ export interface ToolDefinition {
   unauthenticated public chat widget," and it also feeds the `access` default
   (see §4). A tool can be `publicSafe: true` and still `internal: true` (e.g.
   `recallPublicMemories`) — public-chat-eligible but never exposed on MCP.
-- **`access`** — new field, added for this migration. See §4 for how it
-  resolves to an MCP permission action.
+- **`access`** — resolves to an MCP permission action. See §4. `maintenance`
+  is never derived from `publicSafe`/absence — it is only ever set explicitly,
+  because "this is expensive to run" isn't inferable the way "this is
+  read-only" is from `publicSafe`.
 
 ### Where the built-in tools land
 
@@ -163,6 +167,10 @@ MCP:
 | `uploadMedia` | `upload_media` | write (default) |
 | `sendEmail` | `send_email` | destructive (explicit `access: 'destructive'`) |
 
+None of the eight call a paid external API per invocation, so none sit in
+`maintenance` today — that tier is populated entirely by the YouTube
+extension plugins (see below).
+
 `saveMemory`, `recallMemories`, `saveNote`, `recallNotes`, `manageTask`, and
 `recallPublicMemories` are all `internal: true` and stay chat-only.
 
@@ -172,16 +180,23 @@ MCP:
 
 The official MCP server gates every custom tool behind an admin permission
 `action` string on `auth.policies`. A token only sees a tool in `tools/list`
-if its role grants that action. ai-sdk registers three actions of its own
+if its role grants that action. ai-sdk registers four actions of its own
 (`server/src/mcp/permissions.ts`), under `section: 'plugins'` /
 `pluginName: 'ai-sdk'`, which Strapi's action-provider turns into
 `plugin::ai-sdk.*` ids:
 
 | Action id | Displayed as | Covers |
 |---|---|---|
-| `plugin::ai-sdk.mcp.read` | Use read-only AI SDK MCP tools | `listContentTypes`, `searchContent`, `findOneContent`, `aggregateContent`, and 8 of the 9 `yt-transcripts`/`yt-embeddings` tools (all but `fetchTranscript`) |
-| `plugin::ai-sdk.mcp.write` | Use content-mutating AI SDK MCP tools | `createContent`, `updateContent`, `uploadMedia`, and `yt-transcripts`' `fetchTranscript` (it creates a transcript document, which fires yt-embeddings' `afterCreate` hook — an OpenAI embeddings call plus pgvector writes) |
+| `plugin::ai-sdk.mcp.read` | Use read-only AI SDK MCP tools | `listContentTypes`, `searchContent`, `findOneContent`, `aggregateContent`, and 7 of the 9 `yt-transcripts`/`yt-embeddings` tools (all but `fetchTranscript` and `searchYtKnowledge`) |
+| `plugin::ai-sdk.mcp.write` | Use content-mutating AI SDK MCP tools | `createContent`, `updateContent`, `uploadMedia` |
 | `plugin::ai-sdk.mcp.destructive` | Use irreversible / external-side-effect AI SDK MCP tools | `sendEmail` |
+| `plugin::ai-sdk.mcp.maintenance` | Use expensive / external-API-cost AI SDK MCP tools | `yt-transcripts`' `fetchTranscript` (hits YouTube directly, then cascades into yt-embeddings' `afterCreate` hook — an OpenAI embeddings call plus pgvector writes) and `yt-embeddings`' `searchYtKnowledge` (calls OpenAI `embed()` per query — real per-call cost even though it mutates nothing) |
+
+Two axes decide a tier, not one: mutation (`read` vs. `write`/`destructive`)
+and cost/external-side-effect (`maintenance`, orthogonal to mutation). A tool
+can be read-only and still belong in `maintenance` — `searchYtKnowledge` is
+the example — because the risk that matters isn't "does it write a row," it's
+"can a token holder loop this and run up a bill or hammer a third party."
 
 ### Tier derivation (`server/src/mcp/access.ts`)
 
@@ -194,22 +209,28 @@ export function tierFor(def: Tierable): AccessTier {
 An explicit `access` always wins. Otherwise `publicSafe` (already meaning
 "read-only, safe for anonymous chat") implies `read`; everything else — the
 safe default for third-party tools that set neither field — defaults to
-`write`. `sendEmail` and `yt-transcripts`' `fetchTranscript` both need an
-explicit tier: `sendEmail` because it's irreversible/external-side-effect,
-and `fetchTranscript` because `publicSafe: true` would otherwise default it
-to `read` even though it writes a document (see above).
+`write`. `maintenance` is never part of this derivation — a tool lands there
+only via an explicit `access: 'maintenance'`. `sendEmail`, `fetchTranscript`,
+and `searchYtKnowledge` all need an explicit tier: `sendEmail` because it's
+irreversible/external-side-effect; `fetchTranscript` because `publicSafe:
+true` would otherwise default it to `read` even though it writes a document
+and hits YouTube/OpenAI; `searchYtKnowledge` because `publicSafe: true` would
+otherwise default it to `read`, which is technically accurate (it mutates
+nothing) but hides that every call costs money via an OpenAI `embed()` call.
 
 Because permission gating filters `tools/list` itself (not just tool
-execution), a token granted only `mcp.read` cannot see or invoke the write
-and destructive tools. This still depends on every tool author setting
-`access`/`publicSafe` correctly — `publicSafe` describes "safe to expose to
-anonymous public chat," not "does not write," so a `publicSafe` tool that
-mutates data (like `fetchTranscript`) must still declare `access: 'write'`
-explicitly. `mcp.read` is a permission boundary enforced by the tier a tool
-declares, not an automatic guarantee that every `read`-tiered tool is
-side-effect-free — treat it as browse-only for the built-ins, which are
-audited, and verify third-party/plugin tools individually before trusting
-the same claim for them.
+execution), a token granted only `mcp.read` cannot see or invoke the write,
+destructive, or maintenance tools. This still depends on every tool author
+setting `access`/`publicSafe` correctly — `publicSafe` describes "safe to
+expose to anonymous public chat," not "does not write" and not "cheap to
+run," so a `publicSafe` tool that mutates data or costs money per call (like
+`fetchTranscript` or `searchYtKnowledge`) must still declare the correct
+`access` explicitly. `mcp.read` is a permission boundary enforced by the tier
+a tool declares, not an automatic guarantee that every `read`-tiered tool is
+side-effect-free or free to run — treat it as a genuinely browse-only,
+low-cost surface for the built-ins, which are audited, and verify
+third-party/plugin tools individually before trusting the same claim for
+them.
 
 ### Registering the actions
 
@@ -446,14 +467,16 @@ host that this work does not provision or touch:
 - Strapi **>= 5.47** with `mcp: { enabled: true }` (§1)
 - `strapi-plugin-ai-sdk`, `-yt-transcripts`, and `-yt-embeddings` all
   source-linked or installed at `^1.1.0`
-- An **admin API token** granting all three `plugin::ai-sdk.mcp.*`
-  permissions (read, write, destructive) — `test:e2e` asserts on `send_email`
-  being visible, which lives in the destructive tier; a token missing any one
-  tier fails the wrong assertions for a confusing reason
+- An **admin API token** granting all four `plugin::ai-sdk.mcp.*`
+  permissions (read, write, destructive, maintenance) — `test:e2e` asserts on
+  `send_email` being visible (destructive tier) and on the yt-transcripts/
+  yt-embeddings namespace tool counts, which depend on `fetchTranscript` and
+  `searchYtKnowledge` (maintenance tier); a token missing any one tier fails
+  the wrong assertions for a confusing reason
 - Environment variables: `STRAPI_URL`, `STRAPI_ADMIN_TOKEN`, and optionally
   `STRAPI_READONLY_TOKEN` for the permission-scoping assertions (a
-  read-tier-only token to prove write/destructive tools are actually absent,
-  not just unauthorized)
+  read-tier-only token to prove write/destructive/maintenance tools are
+  actually absent, not just unauthorized)
 
 Do not assume these suites are green. Run tier 1 before relying on any of the
 claims in this document that it exists to pin.

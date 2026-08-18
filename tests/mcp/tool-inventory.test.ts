@@ -19,7 +19,7 @@ import { toSnakeCase } from '../../server/src/mcp/naming';
 const EXPECTED_INVENTORY: Array<{
   name: string;
   mcpName: string;
-  tier: 'read' | 'write' | 'destructive';
+  tier: 'read' | 'write' | 'destructive' | 'maintenance';
   internal: boolean;
 }> = [
   { name: 'listContentTypes', mcpName: 'list_content_types', tier: 'read', internal: false },
@@ -77,6 +77,17 @@ describe('builtInTools inventory', () => {
       (row) => row.tier === 'destructive' && !row.internal,
     ).map((row) => row.name);
     expect(destructiveNames).toEqual(['sendEmail']);
+  });
+
+  it('exposes exactly the maintenance-tier tools via MCP', () => {
+    // None of the hub's built-ins call a paid external API per invocation
+    // today; this stays empty until one does. yt-transcripts' fetchTranscript
+    // and yt-embeddings' searchYtKnowledge are maintenance-tier, but those
+    // live in their own plugin packages, not builtInTools.
+    const maintenanceNames = EXPECTED_INVENTORY.filter(
+      (row) => row.tier === 'maintenance' && !row.internal,
+    ).map((row) => row.name);
+    expect(maintenanceNames).toEqual([]);
   });
 
   it('keeps exactly 6 tools internal (chat-only, absent from MCP)', () => {

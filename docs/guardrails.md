@@ -100,8 +100,8 @@ control** — access control, not content screening:
 - **Admin API token authentication.** `/mcp` requires a valid Strapi Admin
   API token (not a Content API token, and not anonymous access). An
   unauthenticated request cannot reach any tool at all.
-- **The three `plugin::ai-sdk.mcp.*` permission tiers** (`read`, `write`,
-  `destructive` — see [`docs/plugin-contract.md`](./plugin-contract.md#4-mcp-permission-tiers)).
+- **The four `plugin::ai-sdk.mcp.*` permission tiers** (`read`, `write`,
+  `destructive`, `maintenance` — see [`docs/plugin-contract.md`](./plugin-contract.md#4-mcp-permission-tiers)).
   These gate **which tools a given token's role can call at all** — a
   read-only token cannot reach `createContent`, `updateContent`,
   `uploadMedia`, or `sendEmail` regardless of what its arguments say.

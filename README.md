@@ -342,8 +342,9 @@ configs.
   `ai-sdk-yt-transcripts__fetchTranscript` ->
   `ai_sdk_yt_transcripts__fetch_transcript`).
 - Each tool is gated by an admin permission action — `plugin::ai-sdk.mcp.read`,
-  `.write`, or `.destructive` — derived from the tool's `access` field (or
-  `publicSafe` when `access` is unset). A token only sees tools its role's
+  `.write`, `.destructive`, or `.maintenance` — derived from the tool's
+  `access` field (or `publicSafe` when `access` is unset; `maintenance` is
+  never derived, only set explicitly). A token only sees tools its role's
   permissions cover; permission gating filters `tools/list` itself, not just
   execution.
 - Schemas are handed to the SDK as plain Zod 4 objects — no custom
@@ -365,7 +366,7 @@ configs.
   for what replaced it and why it's a partial mitigation, not a full one.
 
 For the full contract — the `ai-tools` service shape, `ToolDefinition`,
-namespacing, Zod rules, and the three permission tiers — see
+namespacing, Zod rules, and the four permission tiers — see
 [`docs/plugin-contract.md`](./docs/plugin-contract.md).
 
 ### Setup
@@ -390,12 +391,17 @@ MCP authenticates with **Admin API tokens**, not Content API tokens:
 1. Go to **Settings → Administration Panel → API Tokens**
 2. Create a new token (or edit an existing one)
 3. Under **Permissions**, find the **Ai-sdk** section and enable the tiers
-   this token should reach: `mcp.read`, `mcp.write`, `mcp.destructive`
+   this token should reach: `mcp.read`, `mcp.write`, `mcp.destructive`,
+   `mcp.maintenance`
 4. Copy the token
 
 A read-only token (only `mcp.read` granted) gets a genuinely browse-only
-surface — write and destructive tools don't appear in `tools/list` at all
-for that token, not just refuse execution.
+surface — write, destructive, and maintenance tools don't appear in
+`tools/list` at all for that token, not just refuse execution. `maintenance`
+covers tools that cost money or hit an external API per call (e.g. the
+YouTube extension plugins' `fetchTranscript` and `searchYtKnowledge`) even
+when they don't mutate anything — grant it separately from `mcp.read` if a
+token should browse but not spend.
 
 #### 3. Connect your AI client
 
@@ -495,9 +501,9 @@ backward-compatible shim — this was a hard cutover, not a gradual migration.
    API token that worked against `/api/ai-sdk/mcp` will not authenticate
    against `/mcp` at all. You need an **Admin API token** (Settings →
    Administration Panel → API Tokens), and that token's role must be granted
-   the new `plugin::ai-sdk.mcp.read` / `.write` / `.destructive` permissions
-   — there is no "Ai-sdk: handle" permission to carry forward; it's gone
-   along with the old controller.
+   the new `plugin::ai-sdk.mcp.read` / `.write` / `.destructive` /
+   `.maintenance` permissions — there is no "Ai-sdk: handle" permission to
+   carry forward; it's gone along with the old controller.
 
    Before:
    ```json
@@ -555,7 +561,8 @@ backward-compatible shim — this was a hard cutover, not a gradual migration.
    `v1.1.0`, `/mcp` is served by Strapi core — this plugin has no route or
    controller there, so there is nothing to attach a middleware to. **This
    protection is genuinely gone, with no config flag to restore it.** The
-   admin-token authentication and `plugin::ai-sdk.mcp.read`/`.write`/`.destructive`
+   admin-token authentication and
+   `plugin::ai-sdk.mcp.read`/`.write`/`.destructive`/`.maintenance`
    permission tiers are real mitigations, but they gate *who can call which
    tools*, not *what a call's arguments contain* — they are not a substitute
    for content screening. See
@@ -811,7 +818,7 @@ interface ToolDefinition {
   execute: (args: any, strapi: Core.Strapi, context?: ToolContext) => Promise<unknown>;
   internal?: boolean;              // If true, hidden from MCP (AI chat only)
   publicSafe?: boolean;            // If true, available in public/widget chat; also the default MCP tier is 'read' when true
-  access?: 'read' | 'write' | 'destructive'; // MCP permission tier override; defaults to 'read' if publicSafe else 'write'
+  access?: 'read' | 'write' | 'destructive' | 'maintenance'; // MCP permission tier override; defaults to 'read' if publicSafe else 'write'. 'maintenance' (expensive / external-API-cost) is never derived — set it explicitly.
 }
 ```
 
@@ -923,7 +930,7 @@ export default {
 };
 ```
 
-The tool is automatically available in AI chat and, on the next Strapi restart, MCP (unless `internal: true`) — gated by `plugin::ai-sdk.mcp.read`/`.write`/`.destructive` per its `access`/`publicSafe`. No changes to `tools/index.ts` or `mcp/register-tools.ts` needed.
+The tool is automatically available in AI chat and, on the next Strapi restart, MCP (unless `internal: true`) — gated by `plugin::ai-sdk.mcp.read`/`.write`/`.destructive`/`.maintenance` per its `access`/`publicSafe`. No changes to `tools/index.ts` or `mcp/register-tools.ts` needed.
 
 ### Adding an AI Provider
 
@@ -1028,10 +1035,10 @@ server/src/
   tool-logic/                 # Pure business logic (shared by AI SDK + MCP)
   mcp/                        # Bridge onto Strapi's official MCP server (v1.1.0+)
     index.ts                  # registerAiSdkMcpTools() — entry point, called from bootstrap.ts
-    permissions.ts             # registers plugin::ai-sdk.mcp.{read,write,destructive}
+    permissions.ts             # registers plugin::ai-sdk.mcp.{read,write,destructive,maintenance}
     register-tools.ts          # walks registry.getPublic(), calls strapi.ai.mcp.registerTool()
     register-resources.ts      # registers the strapi://ai-sdk/tools/guide resource
-    access.ts                  # read/write/destructive tier derivation
+    access.ts                  # read/write/destructive/maintenance tier derivation
     naming.ts                  # camelCase/namespace -> MCP snake_case name conversion
     size-guard.ts              # ~1MB wire-size backstop
     resources/tool-guide.ts    # tool-guide markdown generator

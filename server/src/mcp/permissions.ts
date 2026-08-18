@@ -35,6 +35,17 @@ export const MCP_ACTION_DEFS: McpActionDef[] = [
     uid: 'mcp.destructive',
     displayName: 'Use irreversible / external-side-effect AI SDK MCP tools',
   },
+  {
+    // Expensive-to-run tools: they call a paid external API per invocation
+    // (or otherwise carry real external-side-effect cost) and could be
+    // looped indefinitely by a token holder, regardless of whether they
+    // mutate anything. Split out so a browse-and-annotate token (read +
+    // write) can't trigger them.
+    section: 'plugins',
+    pluginName: 'ai-sdk',
+    uid: 'mcp.maintenance',
+    displayName: 'Use expensive / external-API-cost AI SDK MCP tools',
+  },
 ];
 
 export async function registerMcpAdminPermissions(strapi: Core.Strapi): Promise<void> {

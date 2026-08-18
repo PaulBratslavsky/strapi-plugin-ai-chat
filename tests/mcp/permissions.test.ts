@@ -7,7 +7,7 @@ describe('registerMcpAdminPermissions', () => {
   it('registers one action per tier', async () => {
     const { strapi, captured } = createFakeStrapi();
     await registerMcpAdminPermissions(strapi);
-    expect(captured.actions).toHaveLength(3);
+    expect(captured.actions).toHaveLength(4);
   });
 
   it('registers under the plugins section scoped to ai-sdk', async () => {
@@ -28,6 +28,6 @@ describe('registerMcpAdminPermissions', () => {
   });
 
   it('exports the definitions for reuse', () => {
-    expect(MCP_ACTION_DEFS).toHaveLength(3);
+    expect(MCP_ACTION_DEFS).toHaveLength(4);
   });
 });
