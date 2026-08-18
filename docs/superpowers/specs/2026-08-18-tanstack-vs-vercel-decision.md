@@ -203,13 +203,62 @@ syntactic one. Any future SDK swap should start there.
 stability posture matters for published packages, and the wins TanStack offers are
 concentrated in embeddings ergonomics, which is a small part of the surface.
 
-**music-kb client — stay on TanStack.** It is an ESM TanStack Start app; the blocker does
-not apply. It already runs `chat`, `toolDefinition`, `toServerSentEventsResponse` and
-`createOllamaChat` across 16 files with Ollama, and 14 test files cover the services. There
-is no reason to migrate it toward Vercel.
+**music-kb client — stay on TanStack.** It is a **TanStack Start** app
+(`@tanstack/react-start@1.167.32`, Vite 8, ESM), so the blocker does not apply. It runs
+`chat`, `toolDefinition`, `toServerSentEventsResponse` and `createOllamaChat` across 16
+files against Ollama, with 14 test files covering the services.
+
+### Important: music-kb does NOT run TanStack AI inside Strapi
+
+This is easy to misread, and the distinction is the whole point.
+
+music-kb is **two applications**:
+
+| | stack | AI dependency | talks to Ollama? |
+|---|---|---|---|
+| `client/` | TanStack Start (ESM, Vite) | `@tanstack/ai`, `@tanstack/ai-ollama` | yes — chat, tools, structured output |
+| `server/` | **Strapi** | **none whatsoever** | yes — embeddings only, via raw `fetch()` |
+
+The AI work happens in TanStack Start's **server routes** (`api.chat.tsx`, `api.ask.tsx`,
+`api.digest-chat.tsx`, `api.notes.compose.tsx`) — server-side, but inside the Start app, not
+inside Strapi.
+
+Strapi's entire Ollama integration is a plain POST in
+`server/src/mcp/utils/embeddings.ts`:
+
+```ts
+const res = await fetch(`${OLLAMA_HOST}/api/embeddings`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ model: CURRENT_EMBEDDING_MODEL, prompt: body }),
+});
+```
+
+**No SDK. No CommonJS/ESM problem to have.**
+
+So music-kb is not evidence that "TanStack AI works in Strapi." It is evidence that
+music-kb *never put an AI SDK in Strapi in the first place* — which is why it has never met
+this problem.
+
+### The third option neither SDK analysis considered
+
+That raises a question this comparison had been framing away: **does the embeddings plugin
+need an AI SDK at all?**
+
+`yt-embeddings` pulls in `ai` + `@ai-sdk/openai` — 15M and 12 packages — substantially to
+call an embeddings endpoint, which is one POST to `/v1/embeddings` returning a vector. The
+SDK earns its weight for chat: streaming, tool loops, message normalisation, provider
+switching. For embeddings it buys retry/telemetry conveniences and a typed wrapper around a
+single HTTP call.
+
+music-kb demonstrates the alternative in ~25 lines with zero dependencies, and it is the
+only part of that codebase that has never had an SDK compatibility problem.
+
+Worth evaluating separately — it would make the SDK question moot for that plugin entirely,
+and it is orthogonal to which SDK the *hub* uses for chat.
 
 Two codebases, two answers, one library — because the constraint is the module system, not
-the API.
+the API. And a third answer worth considering: for some workloads, no SDK at all.
 
 ## Revisit if
 
