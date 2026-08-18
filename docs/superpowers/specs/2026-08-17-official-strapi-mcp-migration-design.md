@@ -4,8 +4,14 @@
 **Date:** 2026-08-17
 **Scope:** the three packages under `/Users/paul/work/plugin-dev/ai-sdk-plugins`
 — `strapi-plugin-ai-sdk`, `strapi-plugin-ai-sdk-yt-embeddings`,
-`strapi-plugin-ai-sdk-yt-transcripts`. No files outside that folder are
-modified.
+`strapi-plugin-ai-sdk-yt-transcripts` — plus `strapi-local`, the integration
+host, added to scope on 2026-08-18 so the E2E suites can actually be executed.
+`strapi-prod` remains out of scope.
+
+**Amendment, 2026-08-18.** Two additions after the original delivery: aligning
+`yt-embeddings` onto AI SDK v6 (Phase 3), and upgrading `strapi-local` so
+Phase 2's suites can run (Phase 2a). See the AI SDK alignment section and the
+revised delivery path.
 
 ## Summary
 
@@ -13,8 +19,9 @@ Replace `strapi-plugin-ai-sdk`'s hand-rolled MCP server with the official
 Strapi MCP server (built into Strapi 5.47+), and prove the three plugins work
 together end to end.
 
-Delivery stops at a reviewed branch in each of the three repos. Version numbers
-are set in `package.json`, but nothing is published to npm and no host app is
+Delivery stops at a reviewed branch in each of the three repos, with the E2E
+suites executed against an upgraded `strapi-local`. Version numbers are set in
+`package.json`, but nothing is published to npm and `strapi-prod` is not
 touched.
 
 The plugin stops owning transport, sessions, auth, and schema conversion.
@@ -71,22 +78,77 @@ Three seams break silently today because nothing tests them:
 3. The `__` namespacing that turns `searchYtKnowledge` into
    `ai_sdk_yt_embeddings__search_yt_knowledge`
 
-### Test host (external prerequisite)
+### Test host (now in scope)
 
-`strapi-local` is the E2E host. It sits outside this scope and is **not**
-modified by this work; the following are prerequisites the maintainer performs
-before phase 2 can run:
+`strapi-local` is the E2E host. As of 2026-08-18 it is IN scope and this work
+upgrades it. Its state before that change:
 
-| Prerequisite | Current state |
+| Item | Before |
 |---|---|
-| Strapi `>= 5.47` | on 5.39.0 — needs upgrading |
+| Strapi | 5.39.0 — below the 5.47 floor |
 | `mcp: { enabled: true }` in `config/server.ts` | absent |
-| An admin API token for the suite | not yet minted |
-| The three plugins source-linked | already wired via `resolve: "../ai-sdk-plugins/..."` |
+| Admin API token for the suite | not minted |
+| The three plugins | already source-linked via `resolve: "../ai-sdk-plugins/..."` |
+| Database | SQLite at `.tmp/data.db` |
+| `engines.node` | `>=20.0.0 <=24.x.x` — already satisfies Strapi 5.48 |
 
-Note that strapi-local also hosts six unrelated plugins, so its Strapi upgrade
-may surface breakage beyond these three. That is the maintainer's call, not
-part of this work.
+It also hosts six unrelated plugins (octolens-mentions, chords-visualizer,
+youtube-clip, code-editor, music-manager, and a commented-out clerk-auth), so
+its Strapi upgrade can surface breakage beyond these three. That breakage is
+in scope only insofar as it blocks the E2E run; unrelated plugin defects are
+reported, not fixed.
+
+`strapi-prod` remains out of scope: no upgrade, no version bumps, no deploy.
+
+## AI SDK version alignment (added 2026-08-18)
+
+`yt-embeddings` runs `ai@^4` with `@ai-sdk/openai@^1`, while the hub runs
+`ai@^6` with `@ai-sdk/anthropic@^3`. `yt-transcripts` does not use the AI SDK
+at all, so this concerns exactly one package.
+
+**This is not a correctness defect.** The two never exchange `ai` objects:
+what crosses from `yt-embeddings` to the hub is a plain tool definition — name,
+description, Zod schema, execute function — which the hub then wraps with its
+own `tool()` and `zodSchema()`. `ai` is a direct dependency in each package,
+not a peer, so the two majors resolve independently. The dependency that
+genuinely must match is `zod`, and it already does at `4.3.5` in both — which
+matters because of the per-instance `.describe()` registry documented above.
+
+The case for aligning is maintenance: `ai@4` is two majors behind, its provider
+line `@ai-sdk/openai@1` is end-of-life, and divergent majors inside one plugin
+family mislead contributors.
+
+### Migration surface
+
+Eleven call sites across four files in `yt-embeddings/server/src/`:
+
+| API | Sites | Risk |
+|---|---|---|
+| `embed` | 4 | Low — `{ model, value }` is stable across v4→v6 |
+| `embedMany` | 1 | Low — `{ model, values }` is stable |
+| `generateText` | 2 | Low — both calls pass only `{ model, system, prompt }` |
+| `generateObject` | 1 | Medium — schema handling changed; passes a Zod schema |
+| `createOpenAI` | 3 | The substantive part — provider `^1` → `^3` |
+
+Files: `plugin-manager.ts`, `controllers/controller.ts`,
+`services/yt-embeddings.ts`, `services/yt-metadata.ts`.
+
+None of these call sites use `maxTokens`, `messages`, `CoreMessage`, or
+streaming — the APIs that absorbed most of the v5 breakage. That is why the
+surface is small despite spanning two majors.
+
+### Decision
+
+Upgrade `yt-embeddings` to `ai@^6` and `@ai-sdk/openai@^3`, keeping the call
+shapes as they are except where the new majors require a change. Verify by
+executing a real embed and a real RAG query against OpenAI and Neon — not by
+type-checking alone, which would not catch a runtime schema or provider change.
+
+**Rejected alternative:** having `yt-embeddings` drop its direct `ai`
+dependency and register OpenAI through the hub's `AIProvider.registerProvider()`
+instead. Architecturally cleaner and would remove the duplicate install
+entirely, but it couples the two plugins far more tightly and is a larger
+change than a version bump. Worth revisiting separately; out of scope here.
 
 ## Key finding: Strapi supports Zod 4
 
@@ -150,8 +212,10 @@ description before it reached the client. This design imports `zod` directly.
 | 6 | External services | Two tiers: structural by default, live opt-in |
 | 7 | Suite location | `strapi-plugin-ai-sdk` (the hub) |
 | 8 | Alignment | Peer deps, compat check, lockstep versions, one contract doc |
-| 9 | Delivery | Stops at a reviewed branch; no npm publish, no host changes |
+| 9 | Delivery | Stops at reviewed branches; no npm publish; `strapi-prod` untouched |
 | 10 | Versions | All three set to `1.1.0` in `package.json`, unpublished |
+| 11 | Test host | `strapi-local` upgraded in scope (2026-08-18) so E2E can run |
+| 12 | AI SDK | `yt-embeddings` aligned to `ai@^6` / `@ai-sdk/openai@^3` |
 
 ## Architecture
 
@@ -481,21 +545,34 @@ The ai-sdk MCP swap: delete the old stack, add the bridge, permissions, access
 tiers, size guard, and resource. Add schema-level arg coercion to replace
 `coerceArgs`. Add the `access` field to `ToolDefinition`.
 
-### Phase 2 — E2E
+### Phase 2 — E2E suites (written)
 
-Build and link all three plugins into strapi-local. Write and run tier 1, then
-tier 2. Fix what they find.
+Build and link all three plugins into strapi-local. Write tier 1 and tier 2.
 
-Depends on the strapi-local prerequisites above being in place. If the host is
-not yet on 5.47+ with MCP enabled, phase 2 blocks; phases 0 and 1 do not.
+### Phase 2a — strapi-local upgrade (added 2026-08-18)
 
-Exit: both tiers green, existing chat tests green and unmodified.
+Back up `.tmp/data.db` first. Upgrade Strapi 5.39 → latest 5.x. Add
+`mcp: { enabled: true }` to `config/server.ts`. Mint an admin API token granting
+all three `plugin::ai-sdk.mcp.*` actions, plus content-manager read+delete on
+the Transcript content type for the tier-2 cleanup. Boot and confirm the six
+unrelated plugins still load.
+
+Exit: `/mcp` answers `tools/list`, tier 1 green, tier 2 green.
+
+### Phase 3 — AI SDK alignment (added 2026-08-18)
+
+Upgrade `yt-embeddings` to `ai@^6` and `@ai-sdk/openai@^3` across the eleven
+call sites in four files. Verify with a real embed and a real RAG query, not
+type-checking alone.
+
+Exit: embeddings write to Neon and `search_yt_knowledge` returns hits through
+the live MCP endpoint.
 
 ### Done
 
-Each of the three repos has a reviewed branch with its changes and its version
-set to `1.1.0`. Publishing and any host-app rollout are the maintainer's, on
-their own schedule.
+Each repo has a reviewed branch at `1.1.0`, the E2E suites have actually been
+run green, and `strapi-local` is on a supported Strapi with MCP enabled.
+Publishing and any `strapi-prod` rollout remain the maintainer's.
 
 ## Risks
 
@@ -515,8 +592,11 @@ their own schedule.
 ## Out of scope
 
 - Publishing any package to npm
-- Any change to `strapi-local` or `strapi-prod`, including their Strapi
-  upgrades, MCP config, and deployment
+- Any change to `strapi-prod` — no Strapi upgrade, no version bumps, no deploy
+- Fixing defects in the six unrelated plugins hosted by `strapi-local`, unless
+  one blocks the E2E run
+- Re-architecting `yt-embeddings` to consume the hub's `AIProvider` instead of
+  its own `ai` dependency (considered and deferred; see the alignment section)
 - Tightening per-tool output schemas beyond `LOOSE_OUTPUT`
 - Exposing the memory / notes / task tools over MCP
 - Fixing music-kb's dropped `.describe()` text
