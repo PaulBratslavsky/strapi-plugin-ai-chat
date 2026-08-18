@@ -30,8 +30,56 @@ Under `moduleResolution: "Node"`, TanStack's own documented one-liner —
 with the CommonJS output every Strapi plugin must produce (`TS5095`).
 
 **Ten of the casts in the yt-embeddings port trace to this one issue** — not to loose
-typing in TanStack's API design. It is a packaging/`exports`-map problem, and it is not
-something we can fix from our side without abandoning the tsconfig Strapi requires.
+typing in TanStack's API design.
+
+### It is worse than a typing problem: the port cannot run
+
+Follow-up investigation (2026-08-18) established that the type errors were a symptom, not
+the disease. Verified against the published tarballs:
+
+```
+@tanstack/ai@0.45.0        type: module   main: ABSENT
+  exports["."] = { "types": "./dist/esm/index.d.ts", "import": "./dist/esm/index.js" }
+@tanstack/ai-openai@0.19.1     exports conditions: types, import — no `require`
+@tanstack/ai-anthropic@0.16.6  exports conditions: types, import — no `require`
+```
+
+There is **no `require` condition and no CJS build** — `dist/` contains only `dist/esm`.
+The packages are ESM-only.
+
+This plugin compiles to CommonJS (`"type": "commonjs"`, `strapi-server` → `dist/server/index.js`),
+and its build emits `require("ai")` today. A TanStack build would emit
+`require("@tanstack/ai")`, which resolves to:
+
+```
+ERR_PACKAGE_PATH_NOT_EXPORTED   (verified on Node 22.18.0 AND Node 24.16.0)
+```
+
+Node's `require(esm)` support in 22.12+/23+ does not rescue this. Resolution fails *before*
+loading, because the `require` condition is absent from the `exports` map entirely.
+
+**So the TanStack plugin build would fail at Strapi boot.** Not degrade — fail to load.
+
+### An audit gap worth stating plainly
+
+Both TanStack ports type-check, build, and pass 79/79 unit tests — and **neither was ever
+executed**. The porting agents were told not to start a Strapi server, because a shared host
+was in use for manual testing. That coordination decision was right for the environment and
+wrong for the evidence: a green build concealed a hard runtime blocker.
+
+The general lesson outranks the specific finding: *a build that has never run is not
+evidence that it works.* The same trap produced this session's other two most serious
+findings — a tool-registration path that would kill Strapi at boot, and an E2E test that
+silently stopped testing after its first run.
+
+### The one workaround, honestly assessed
+
+`await import('@tanstack/ai')` from CommonJS **does** work (verified: 122 symbols).
+
+But it would force every AI-SDK touchpoint to become async and dynamically loaded, in a
+plugin whose provider registration and bootstrap paths are partly synchronous. That is a
+structural change to accommodate a dependency's packaging — a poor trade for a library
+whose advantages here are concentrated in embeddings ergonomics.
 
 That is the whole decision. TanStack AI is a good library in the environment it targets —
 modern ESM, bundler resolution, TanStack Start. A Strapi v5 plugin is the opposite
@@ -133,8 +181,22 @@ the API.
 
 ## Revisit if
 
-- TanStack ships a `moduleResolution: "Node"`-compatible `exports` map. This single change
-  would remove the primary objection.
+- **TanStack ships a CJS build with a `require` condition in its `exports` map.** This is
+  the single change that would remove the primary objection.
+
+  An earlier draft of this document phrased the condition as "a `moduleResolution: "Node"`-compatible
+  `exports` map". That was wrong, and the correction matters: `moduleResolution: "Node"`
+  (Node10) **never reads the `exports` field at all** — it predates it, and falls back to
+  `main`/`types`. No `exports` map can be made compatible with it. TanStack already ships a
+  top-level `types` field, which is why the failures were confusing type mismatches rather
+  than clean "cannot find module" errors.
+
+  The real ask is therefore twofold: a **CJS artifact** (today `dist/` is ESM-only) and a
+  **`require` condition** pointing at it. Both are conventional dual-package publishing; the
+  reference `@tanstack/config` Vite setup already documents an exports map with `import` and
+  `require` conditions and both `.d.ts` and `.d.cts` types. So this is an achievable ask of
+  the project, not a fundamental incompatibility — but it is theirs to make, not ours to
+  work around.
 - `@tanstack/ai` reaches 1.0 with a stability commitment.
 - Strapi relaxes the CommonJS requirement for plugin server code.
 - Local-first Ollama inference becomes a hard requirement for the *plugins* (not just
