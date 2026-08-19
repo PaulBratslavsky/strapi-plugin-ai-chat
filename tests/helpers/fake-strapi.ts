@@ -20,12 +20,13 @@ export interface FakeStrapiOptions {
    */
   failToolNames?: string[];
   /**
-   * Rows the fake `strapi.db` reports for our tool actions: [roleGrants,
-   * tokenGrants]. Defaults to [1, 1] so the "nothing is granted" advisory
-   * stays quiet unless a test asks for it. Set `null` to omit `db` entirely,
-   * simulating a Strapi whose query layer is unavailable.
+   * Rows the fake `strapi.db` reports in `admin::permission` for our tool
+   * actions. That one table holds both role-linked and admin-token-linked
+   * grants. Defaults to 1 so the "nothing is granted" advisory stays quiet
+   * unless a test asks for it. Set `null` to omit `db` entirely, simulating a
+   * Strapi whose query layer is unavailable.
    */
-  grantCounts?: [number, number] | null;
+  grantCounts?: number | null;
 }
 
 /**
@@ -41,7 +42,7 @@ export function createFakeStrapi(options: FakeStrapiOptions = {}): {
     mcpEnabled = true,
     hasAiNamespace = true,
     failToolNames = [],
-    grantCounts = [1, 1],
+    grantCounts = 1,
   } = options;
 
   const captured: Captured = { tools: [], resources: [], actions: [], logs: [] };
@@ -95,10 +96,7 @@ export function createFakeStrapi(options: FakeStrapiOptions = {}): {
       ? {}
       : {
           db: {
-            query: (uid: string) => ({
-              count: async () =>
-                uid === 'admin::permission' ? grantCounts[0] : grantCounts[1],
-            }),
+            query: () => ({ count: async () => grantCounts }),
           },
         }),
   } as unknown as Core.Strapi;

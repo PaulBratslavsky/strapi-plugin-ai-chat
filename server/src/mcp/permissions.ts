@@ -25,7 +25,10 @@
 // the ai-sdk section lean: it lists only the tools it actually owns.
 import type { Core } from '@strapi/strapi';
 import type { ToolRegistry } from '../lib/tool-registry';
-import { toActionSlug, toDisplayName, getToolSource } from './naming';
+import { toActionSlug, toDisplayName } from './naming';
+import { actionForTool, pluginNameForTool, AI_SDK_PLUGIN_NAME } from '../lib/tool-permissions';
+
+export { actionForTool };
 
 export interface McpActionDef {
   section: 'plugins';
@@ -41,9 +44,10 @@ export interface McpActionDef {
  * one plugin — this is just a stable, readable group name within each
  * plugin's section.
  */
-const SUBCATEGORY = 'MCP tools';
-
-const AI_SDK_PLUGIN_NAME = 'ai-sdk';
+// Grouping label in the permissions grid. Deliberately not "MCP tools":
+// these same actions gate in-Strapi chat when granted on a role, so naming
+// them after MCP misleads anyone editing a role.
+const SUBCATEGORY = 'AI tools';
 
 /** The tool-guide MCP resource gets its own action, alongside real tools. */
 const TOOL_GUIDE_ACTION_DEF: McpActionDef = {
@@ -55,12 +59,6 @@ const TOOL_GUIDE_ACTION_DEF: McpActionDef = {
 };
 
 export const TOOL_GUIDE_ACTION = 'plugin::ai-sdk.tool.guide';
-
-/** The plugin name a registry tool's permission is registered under. */
-function pluginNameForTool(name: string): string {
-  const source = getToolSource(name);
-  return source === 'built-in' ? AI_SDK_PLUGIN_NAME : source;
-}
 
 /**
  * Build one admin action definition per public tool in the registry, plus
@@ -84,11 +82,6 @@ export function buildMcpActionDefs(registry: ToolRegistry): McpActionDef[] {
   return defs;
 }
 
-/** The action id a given registry tool name is gated behind. */
-export function actionForTool(name: string): string {
-  return `plugin::${pluginNameForTool(name)}.tool.${toActionSlug(name)}`;
-}
-
 /**
  * Warn when nothing grants any of our tool actions.
  *
@@ -106,18 +99,24 @@ async function warnIfNothingGranted(strapi: Core.Strapi, actionIds: string[]): P
   if (actionIds.length === 0) return;
 
   try {
-    const where = { action: { $in: actionIds } };
-    const [roleGrants, tokenGrants] = await Promise.all([
-      strapi.db.query('admin::permission').count({ where }),
-      strapi.db.query('admin::api-token-permission').count({ where }),
-    ]);
+    // `admin::permission` holds BOTH kinds of grant: rows linked to a role
+    // (admin users, i.e. in-Strapi chat) and rows linked to an admin API
+    // token (external MCP clients). One count covers both.
+    //
+    // Do NOT also check `admin::api-token-permission` — that table belongs to
+    // *content-API* tokens serving /api/*, which never hold `.tool.` actions.
+    // Querying it always returns 0 and cannot affect the result.
+    const grants = await strapi.db
+      .query('admin::permission')
+      .count({ where: { action: { $in: actionIds } } });
 
-    if (roleGrants === 0 && tokenGrants === 0) {
+    if (grants === 0) {
       strapi.log.warn(
         `[ai-sdk:mcp] ${actionIds.length} tool permission(s) registered, but no role or API ` +
           `token grants any of them. MCP clients will authenticate successfully and receive an ` +
           `EMPTY tools/list, and in-Strapi chat will have no tools. Grant them under each ` +
-          `plugin's section in Settings > Roles (for chat) or Settings > API Tokens (for MCP). ` +
+          `plugin's section in Settings > Roles (for chat) or Settings > Admin Tokens ` +
+          `(for MCP). ` +
           `If you upgraded from a version using plugin::ai-sdk.mcp.read/.write/.destructive/` +
           `.maintenance, those actions no longer exist and their grants were pruned — the tools ` +
           `must be re-granted individually.`,
