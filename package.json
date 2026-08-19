@@ -50,7 +50,8 @@
     "test:stream": "node tests/test-stream.mjs",
     "test:chat": "node tests/test-chat.mjs",
     "test:guardrails": "npx tsx tests/test-guardrails.ts",
-    "test:public-chat": "node tests/test-public-chat.mjs"
+    "test:public-chat": "node tests/test-public-chat.mjs",
+    "test:mcp-scoping": "node tests/test-mcp-scoping.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.15",
