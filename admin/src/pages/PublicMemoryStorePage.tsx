@@ -113,7 +113,7 @@ function PublicMemoryModal({ memory, open, onClose, onSave }: MemoryModalProps) 
     <Modal.Root open={open} onOpenChange={(isOpen: boolean) => !isOpen && handleClose()}>
       <WideModalContent>
         <Modal.Header>
-          <Modal.Title>{isEdit ? 'Edit Public Memory' : 'Add Public Memory'}</Modal.Title>
+          <Modal.Title>{isEdit ? 'Edit Shared Memory' : 'Add Shared Memory'}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           <Flex direction="column" gap={5} width="100%">
@@ -137,7 +137,7 @@ function PublicMemoryModal({ memory, open, onClose, onSave }: MemoryModalProps) 
                 <SingleSelectOption value="product">Product</SingleSelectOption>
                 <SingleSelectOption value="policy">Policy</SingleSelectOption>
               </SingleSelect>
-              <Field.Hint>Used to organize public memories by topic</Field.Hint>
+              <Field.Hint>Used to organize shared memories by topic</Field.Hint>
             </Field.Root>
           </Flex>
         </Modal.Body>
@@ -199,8 +199,8 @@ const PublicMemoryStorePage = () => {
   return (
     <Main>
       <Layouts.Header
-        title="Public Memory Store"
-        subtitle={`${memories.length} public memories — available to all visitors via the public chat`}
+        title="Shared Memory Store"
+        subtitle={`${memories.length} shared memories — available to every admin in this project`}
         primaryAction={
           <Button startIcon={<Plus />} onClick={handleOpenCreate}>
             Add memory
@@ -226,7 +226,7 @@ const PublicMemoryStorePage = () => {
                 setSearch('');
                 setPage(1);
               }}
-              placeholder="Search public memories..."
+              placeholder="Search shared memories..."
             >
               Search
             </Searchbar>
@@ -257,7 +257,7 @@ const PublicMemoryStorePage = () => {
                 <Td colSpan={4}>
                   <Box padding={4}>
                     <Typography textColor="neutral500">
-                      {search ? 'No public memories match your search' : 'No public memories yet — add knowledge for your public chatbot'}
+                      {search ? 'No shared memories match your search' : 'No public memories yet — add knowledge for your public chatbot'}
                     </Typography>
                   </Box>
                 </Td>

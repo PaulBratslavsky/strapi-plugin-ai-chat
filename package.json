@@ -1,5 +1,5 @@
 {
-  "version": "2.0.0",
+  "version": "2.0.1",
   "keywords": [
     "strapi",
     "strapi-plugin",
@@ -49,12 +49,9 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.15",
     "@ai-sdk/openai-compatible": "^2.0.69",
-    "@ai-sdk/react": "^3.0.41",
     "@strapi/design-system": "^2.0.0-rc.30",
     "@strapi/icons": "^2.0.0-rc.30",
     "ai": "^6.0.39",
-    "lucide-react": "^0.575.0",
-    "react-intl": "^8.1.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "zod": "^4.3.5"

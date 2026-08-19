@@ -157,7 +157,7 @@ export function Chat() {
           </ToggleSidebarBtn>
           <ToggleSidebarBtn
             onClick={() => navigate(`/plugins/${PLUGIN_ID}/public-memory-store`)}
-            aria-label="Public Memory Store"
+            aria-label="Shared Memory Store"
           >
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
               <circle cx="8" cy="8" r="6" />

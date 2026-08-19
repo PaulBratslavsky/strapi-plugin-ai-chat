@@ -499,7 +499,7 @@ graph TB
 
 The hook receives:
 - `text` -- the extracted user input
-- `route` -- `'chat'`, `'public-chat'`, `'ask'`, or `'ask-stream'`
+- `route` -- `'chat'` (the only route this plugin screens as of 2.0.0)
 - `ctx` -- the full Koa context (access user, headers, etc.)
 
 ---

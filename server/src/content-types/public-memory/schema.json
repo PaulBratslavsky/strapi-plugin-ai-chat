@@ -4,7 +4,7 @@
   "info": {
     "singularName": "public-memory",
     "pluralName": "public-memories",
-    "displayName": "AI Public Memory"
+    "displayName": "AI Shared Memory"
   },
   "options": {
     "draftAndPublish": false
@@ -24,7 +24,12 @@
     },
     "category": {
       "type": "enumeration",
-      "enum": ["general", "faq", "product", "policy"],
+      "enum": [
+        "general",
+        "faq",
+        "product",
+        "policy"
+      ],
       "default": "general"
     }
   }

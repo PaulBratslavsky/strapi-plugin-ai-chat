@@ -143,9 +143,12 @@ export interface ToolDefinition {
   `registerToolsOnMcp()` ever sees them. Use this for chat-only tools (the
   built-in memory/notes/task tools all set it).
 - **`publicSafe`** — orthogonal to `internal`. It means "safe for the
-  unauthenticated public chat widget," and it also feeds the `access` default
-  (see §4). A tool can be `publicSafe: true` and still `internal: true` (e.g.
-  `recallPublicMemories`) — public-chat-eligible but never exposed on MCP.
+  read-only and low-risk," and it feeds the `access` default (see §4). Since
+  2.0.0 it grants nothing on its own: anonymous chat moved to
+  `strapi-plugin-ai-sdk-public-chat`, which defines its own read-only tools
+  rather than filtering these by a flag. A tool can still be
+  `publicSafe: true` and `internal: true` (e.g. `recallPublicMemories`) —
+  low-risk, but never exposed on MCP.
 - **`access`** — resolves to an MCP permission action. See §4. `maintenance`
   is never derived from `publicSafe`/absence — it is only ever set explicitly,
   because "this is expensive to run" isn't inferable the way "this is

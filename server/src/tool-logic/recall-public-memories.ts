@@ -9,7 +9,7 @@ export const recallPublicMemoriesSchema = z.object({
 });
 
 export const recallPublicMemoriesDescription =
-  'Recall saved public knowledge and facts. Use this to look up previously saved public information such as FAQs, product details, or policies.';
+  'Recall shared team knowledge. These memories are visible to every admin in this project, unlike recallMemories which returns only the calling admin\'s own notes. Use it for facts the whole team relies on: product details, policies, conventions.';
 
 export type RecallPublicMemoriesParams = z.infer<typeof recallPublicMemoriesSchema>;
 

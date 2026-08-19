@@ -506,7 +506,7 @@ backward-compatible shim — this was a hard cutover, not a gradual migration.
 
 ## Guardrails
 
-The plugin includes a guardrail middleware that checks user input before it reaches the AI. It runs on `/ask`, `/ask-stream`, `/chat`, and `/public-chat` (the public widget endpoint is screened using the same extraction logic as `/chat`). It does **not** run on `/mcp` — that endpoint is served by Strapi itself, not by this plugin's routes, so MCP tool calls are not guardrail-checked — see [`docs/guardrails.md`](./docs/guardrails.md#overview) for details.
+The plugin includes a guardrail middleware that checks user input before it reaches the AI. As of 2.0.0 it runs on the admin `/ai-sdk/chat` route — the only route left that carries user input. Its original purpose was screening anonymous traffic; that surface now lives in `strapi-plugin-ai-sdk-public-chat`, which ships its own screening.
 
 ### What It Catches
 
