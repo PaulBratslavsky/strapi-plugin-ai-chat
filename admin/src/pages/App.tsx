@@ -5,7 +5,6 @@ import { HomePage } from './HomePage';
 import { MemoryStorePage } from './MemoryStorePage';
 import { PublicMemoryStorePage } from './PublicMemoryStorePage';
 import { NoteStorePage } from './NoteStorePage';
-import { WidgetPreviewPage } from './WidgetPreviewPage';
 
 const App = () => {
   return (
@@ -14,7 +13,6 @@ const App = () => {
       <Route path="memory-store" element={<MemoryStorePage />} />
       <Route path="public-memory-store" element={<PublicMemoryStorePage />} />
       <Route path="note-store" element={<NoteStorePage />} />
-      <Route path="widget-preview" element={<WidgetPreviewPage />} />
       <Route path="*" element={<Page.Error />} />
     </Routes>
   );

@@ -1,5 +1,5 @@
 {
-  "version": "1.2.2",
+  "version": "2.0.0",
   "keywords": [
     "strapi",
     "strapi-plugin",
@@ -32,10 +32,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "strapi-plugin build && npm run build:widget",
+    "build": "strapi-plugin build",
     "build:plugin": "strapi-plugin build",
-    "build:widget": "vite build --config widget/vite.config.mts",
-    "dev:widget": "vite build --config widget/vite.config.mts --watch",
     "prepublishOnly": "npm run build",
     "watch": "strapi-plugin watch",
     "watch:link": "strapi-plugin watch:link",
@@ -50,7 +48,6 @@
     "test:stream": "node tests/test-stream.mjs",
     "test:chat": "node tests/test-chat.mjs",
     "test:guardrails": "npx tsx tests/test-guardrails.ts",
-    "test:public-chat": "node tests/test-public-chat.mjs",
     "test:mcp-scoping": "node tests/test-mcp-scoping.mjs"
   },
   "dependencies": {

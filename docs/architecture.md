@@ -93,7 +93,7 @@ graph TB
     Avatar -.->|"animation triggers"| UI
 ```
 
-Note: MCP requests to `/mcp` do **not** pass through the guardrail middleware — that route belongs to Strapi's own MCP service, not to this plugin's routes. Guardrails cover `/ask`, `/ask-stream`, `/chat`, and `/public-chat` — see [`docs/guardrails.md`](./guardrails.md#overview).
+Note: MCP requests to `/mcp` do **not** pass through the guardrail middleware — that route belongs to Strapi's own MCP service, not to this plugin's routes. Guardrails cover `/ask`, `/ask-stream`, and `/chat`, plus the anonymous route in `strapi-plugin-ai-sdk-public-chat`, which borrows the same middleware — see [`docs/guardrails.md`](./guardrails.md#overview).
 
 ---
 
@@ -251,7 +251,7 @@ export default {
 
 ### Guardrails Middleware
 
-The guardrail middleware intercepts AI requests before they reach the controller. It runs as a Strapi route middleware registered on `/ask`, `/ask-stream`, `/chat`, and `/public-chat`, and the input-extraction logic screens all four (`/public-chat` uses the same extraction as `/chat`, labelled `route: 'public-chat'`). It does **not** run on `/mcp` — that route is owned by Strapi's own MCP service, not by this plugin, so MCP tool calls bypass the guardrail middleware entirely — see [`docs/guardrails.md`](./guardrails.md#overview) for the full explanation.
+The guardrail middleware intercepts AI requests before they reach the controller. It runs as a Strapi route middleware registered on `/ask`, `/ask-stream`, and `/chat`. `strapi-plugin-ai-sdk-public-chat` references the same middleware as `plugin::ai-sdk.guardrail` on its own route, so the anonymous surface is still screened after being split out — labelled `route: 'public-chat'`, matched on the `/ai-sdk-public-chat/` path segment. It does **not** run on `/mcp` — that route is owned by Strapi's own MCP service, not by this plugin, so MCP tool calls bypass the guardrail middleware entirely — see [`docs/guardrails.md`](./guardrails.md#overview) for the full explanation.
 
 ```mermaid
 graph LR
@@ -264,7 +264,7 @@ graph LR
 
 **Pipeline steps (per request):**
 
-1. **Extract input** -- adapts to request shape (`messages[]` for `/chat` and `/public-chat`, `prompt` for `/ask` and `/ask-stream`)
+1. **Extract input** -- adapts to request shape (`messages[]` for any `/chat` path, `prompt` for `/ask` and `/ask-stream`)
 2. **Custom hook** -- `beforeProcess` runs first (if configured)
 3. **Normalize** -- NFKC, strip zero-width chars, collapse whitespace
 4. **Pattern match** -- regex patterns from `default-patterns.json` + user config
@@ -369,7 +369,6 @@ classDiagram
 
     class AISDKTools["tools/index.ts"] {
         +createTools(strapi, context?): ToolSet
-        +createPublicTools(strapi, allowed): ToolSet
         +describeTools(tools): string
     }
 
@@ -482,9 +481,13 @@ a new HTTP entry point that forgets to pass `ctx.state.userAbility` silently
 gets **unfiltered** tools. Any new route that builds a toolset must pass the
 ability through.
 
-`publicChat` is deliberately outside all of this: anonymous callers have no
-ability, so it uses `createPublicTools()` and is scoped by `publicSafe` plus
-explicit config allow-lists instead.
+Anonymous traffic is outside all of this. It has no ability to check against,
+so it is not served by this plugin at all — `strapi-plugin-ai-sdk-public-chat`
+owns that surface, with its own routes, its own permission namespace, and an
+explicit `allowedTools` list that defaults to empty. The old approach (a
+`publicChat` method here, filtered by a `publicSafe` flag on each tool) failed
+open: a tool missing the flag, or contributed by another plugin, widened the
+anonymous surface with no config change.
 
 ---
 
@@ -1399,11 +1402,11 @@ server/src/
   services/
     service.ts                      # AI service facade (prompt composition, tool wiring)
   routes/
-    content-api/index.ts            # Public API routes (/ask, /ask-stream, /chat, /public-chat, /widget.js) + guardrail middleware
+    content-api/index.ts            # Content API routes (/ask, /ask-stream, /chat) + guardrail middleware
     admin/index.ts                  # Admin routes (/chat, /tool-sources, conversations, memories, tasks, notes) + guardrail middleware
     # /mcp is not a route of this plugin — it's served by Strapi core (strapi.ai.mcp)
   tools/
-    index.ts                        # createTools() (RBAC-filtered) + createPublicTools() + describeTools()
+    index.ts                        # createTools() (RBAC-filtered) + describeTools()
     definitions/
       index.ts                      # Barrel: exports builtInTools array
       list-content-types.ts         # listContentTypes tool definition (publicSafe)

@@ -12,7 +12,7 @@ import {
   DEFAULT_PUBLIC_CHAT_MODEL,
   DEFAULT_MODEL,
 } from '../lib/types';
-import { createTools, createPublicTools, describeTools } from '../tools';
+import { createTools, describeTools } from '../tools';
 import type { CallerAbility } from '../lib/tool-registry';
 import { trimMessages } from '../lib/trim-messages';
 
@@ -61,25 +61,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
   const plugin = strapi.plugin('ai-sdk') as unknown as PluginInstance;
 
   return {
-    async ask(prompt: string, options?: { system?: string }) {
-      if (!plugin.aiProvider) {
-        throw new Error('AI provider not initialized');
-      }
-      const result = await plugin.aiProvider.generateText(prompt, {
-        system: options?.system,
-      });
-      return result.text;
-    },
 
-    async askStream(prompt: string, options?: { system?: string }) {
-      if (!plugin.aiProvider) {
-        throw new Error('AI provider not initialized');
-      }
-      const result = await plugin.aiProvider.streamText(prompt, {
-        system: options?.system,
-      });
-      return result.textStream;
-    },
 
     /**
      * Chat with messages - returns raw stream for UI message stream response
@@ -130,54 +112,6 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
     /**
      * Public chat - restricted tools, public memories, no admin auth
      */
-    async publicChat(messages: UIMessage[], options?: { system?: string }): Promise<StreamTextRawResult> {
-      const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
-      const publicConfig = config?.publicChat;
-      const maxMessages = publicConfig?.maxConversationMessages ?? DEFAULT_PUBLIC_MAX_CONVERSATION_MESSAGES;
-      const maxOutputTokens = config?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
-      const maxSteps = publicConfig?.maxSteps ?? DEFAULT_PUBLIC_MAX_STEPS;
-      // Fall back to the MAIN chatModel, not a hardcoded Anthropic id. Public chat
-      // previously defaulted to claude-haiku regardless of provider, so pointing the
-      // plugin at a local runtime (Ollama, vLLM) broke the widget with
-      // "model 'claude-haiku-4-5-20251001' not found" while admin chat worked fine.
-      // Set publicChat.chatModel explicitly to use a cheaper model on Anthropic.
-      const publicModel = publicConfig?.chatModel ?? config?.chatModel ?? DEFAULT_MODEL;
-      const allowedContentTypes = publicConfig?.allowedContentTypes ?? [];
-      const publicToolSources = publicConfig?.publicToolSources;
-
-      const trimmedMessages = trimMessages(messages, maxMessages);
-
-      const modelMessages = await convertToModelMessages(trimmedMessages);
-      const tools = createPublicTools(strapi, allowedContentTypes, publicToolSources);
-      const toolsDescription = describeTools(tools);
-      let system = composeSystemPrompt(config, toolsDescription, options?.system || DEFAULT_PUBLIC_PREAMBLE);
-
-      // Inject public memories into system prompt
-      try {
-        const memories = await strapi.documents('plugin::ai-sdk.public-memory' as any).findMany({
-          fields: ['content', 'category'],
-          sort: { createdAt: 'desc' },
-        });
-        if (memories.length > 0) {
-          const lines = memories.map((m: any) => `- [${m.category}] ${m.content}`);
-          system += `\n\nPublic knowledge base (facts and information available to all visitors):\n${lines.join('\n')}`;
-        }
-      } catch (err) {
-        strapi.log.warn('[ai-sdk] Failed to load public memories:', err);
-      }
-
-      if (!plugin.aiProvider) {
-        throw new Error('AI provider not initialized');
-      }
-      return plugin.aiProvider.streamRaw({
-        messages: modelMessages,
-        system,
-        tools,
-        maxOutputTokens,
-        modelId: publicModel,
-        stopWhen: stepCountIs(maxSteps),
-      });
-    },
 
     isInitialized() {
       return plugin.aiProvider?.isInitialized() ?? false;

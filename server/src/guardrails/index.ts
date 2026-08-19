@@ -50,12 +50,14 @@ export function extractUserInput(ctx: Context): { text: string; route: string } 
   const method = ctx.method;
   const body = ctx.request.body as Record<string, unknown> | undefined;
 
-  // Chat routes — extract last user message text.
-  // /public-chat is the unauthenticated embeddable widget endpoint; it uses the
-  // same request body shape as /chat, but is labelled with its own route so
-  // logging/telemetry can distinguish the public surface from the authenticated one.
-  if ((path.endsWith('/chat') || path.endsWith('/public-chat')) && method === 'POST') {
-    const route = path.endsWith('/public-chat') ? 'public-chat' : 'chat';
+  // Chat route — extract last user message text.
+  //
+  // This plugin no longer serves any anonymous surface; that lives in
+  // strapi-plugin-ai-sdk-public-chat, which ships its own guardrails rather
+  // than borrowing these. Deliberately so: a plugin that depends on this one
+  // should not require this one to know its route paths.
+  if (path.endsWith('/chat') && method === 'POST') {
+    const route = 'chat';
     if (body && Array.isArray(body.messages)) {
       const messages = body.messages as Array<{ role?: string; parts?: Array<{ type?: string; text?: string }>; content?: string }>;
       // Find last user message

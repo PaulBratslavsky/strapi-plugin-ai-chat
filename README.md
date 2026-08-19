@@ -57,84 +57,56 @@ In the Strapi admin panel:
 
 ## Embeddable Chat Widget
 
-Add a floating AI chat bubble to **any website** with a single script tag. No npm install, no build step, no React required.
+**Moved out of this plugin in 2.0.0.** The widget and the anonymous chat
+endpoint now live in
+[`strapi-plugin-ai-sdk-public-chat`](https://www.npmjs.com/package/strapi-plugin-ai-sdk-public-chat).
 
-### 1. Enable the public chat endpoint
-
-In the Strapi admin panel:
-
-1. Go to **Settings > Users & Permissions > Roles > Public**
-2. Under **Ai-sdk**, enable `publicChat` and `serveWidget`
-3. Save
-
-### 2. Add the script tag
+```bash
+npm install strapi-plugin-ai-sdk-public-chat
+```
 
 ```html
-<script src="https://your-strapi-url.com/api/ai-sdk/widget.js"></script>
+<script src="https://your-strapi-url.com/api/ai-sdk-public-chat/widget.js"></script>
 ```
 
-That's it. A floating chat button appears in the bottom-right corner. The widget auto-detects its Strapi URL from the script `src`.
+### Why it moved
 
-### Configuration via data attributes
+`publicChat` used to be a second controller method here, next to `chat`, behind
+this plugin's permission set. Granting the Public role
+`plugin::ai-sdk.controller.chat` therefore handed anonymous visitors the full
+admin toolset — `createContent`, `updateContent`, `uploadMedia`, `sendEmail` —
+and nothing about the checkbox said which of the two adjacent endpoints was the
+safe one.
 
-```html
-<script
-  src="https://your-strapi-url.com/api/ai-sdk/widget.js"
-  data-api-token="your-api-token"
-  data-system-prompt="You are a helpful assistant for our store."
-></script>
-```
+The tool filter had the same shape of problem. It selected tools flagged
+`publicSafe: true`, so a tool author decided what anonymous visitors could
+reach and a missing flag failed **open**.
 
-| Attribute | Description |
-|-----------|-------------|
-| `data-api-token` | Optional API token for authenticated requests |
-| `data-system-prompt` | Override the default system prompt |
+The separate plugin inverts both: its own routes and permission namespace, and
+an `allowedTools` list that defaults to **empty**, so nothing is exposed unless
+you name it. Tools added to this plugin later cannot widen that surface.
 
-### How it works
+### Migrating from 1.x
 
-- The widget bundles React and AI SDK internally (~130KB gzipped)
-- It renders inside a Shadow DOM so styles never conflict with your page
-- It uses the `/api/ai-sdk/public-chat` endpoint which only exposes read-only tools
+`POST /api/ai-sdk/public-chat` and `GET /api/ai-sdk/widget.js` are **removed**.
+There is no compatibility shim — one would preserve the shared-controller
+problem the split exists to remove.
 
-### Public Chat vs Admin Chat
+1. Install `strapi-plugin-ai-sdk-public-chat`.
+2. Move `publicChat` config from `plugin::ai-sdk` to
+   `plugin::ai-sdk-public-chat`. `allowedContentTypes` carries over.
+   `publicToolSources` has no equivalent — name individual tools in
+   `allowedTools`.
+3. On the **Public** role: revoke `publicChat` and `serveWidget` under
+   **Ai-sdk**, grant `chat` and `serveWidget` under **Ai-sdk-public-chat**.
+4. Update embed URLs to `/api/ai-sdk-public-chat/widget.js`.
 
-| Feature | Admin Chat (`/chat`) | Public Chat (`/public-chat`) |
-|---------|---------------------|------------------------------|
-| Authentication | Admin JWT required | None (public endpoint) |
-| Tools available | All tools (read + write) | Read-only tools only |
-| Memory store | Per-user private memories | Shared public memories |
-| Content access | All content types | Only configured `allowedContentTypes` |
+> **Check the Public role while you are there.** If it holds
+> `plugin::ai-sdk.controller.chat`, revoke that too — it exposes the full
+> toolset to anonymous visitors, and it is the specific misconfiguration this
+> split was made to rule out.
 
-### Configuring public chat
-
-In `config/plugins.ts`, add `publicChat` with the content types visitors can query:
-
-```typescript
-'ai-sdk': {
-  enabled: true,
-  config: {
-    anthropicApiKey: env('ANTHROPIC_API_KEY'),
-    publicChat: {
-      chatModel: 'claude-haiku-4-5-20251001', // optional: use a cheaper model for public chat
-      allowedContentTypes: [
-        'api::article.article',
-        'api::category.category',
-        'api::product.product',
-      ],
-    },
-  },
-},
-```
-
-If `allowedContentTypes` is an empty array, public chat will have no access to content.
-
-### Managing public memories
-
-Public memories are facts the AI knows when talking to visitors (e.g., "Our return policy is 30 days"). Manage them from the Strapi admin panel:
-
-1. Go to the **AI SDK** plugin page
-2. Click the globe icon in the chat toolbar
-3. Add, edit, or delete public memories with categories: General, FAQ, Product, Policy
+See that plugin's README for its configuration options.
 
 ## Configuration
 
@@ -154,12 +126,6 @@ export default ({ env }) => ({
 
       // System Prompt (optional)
       systemPrompt: 'You are a helpful CMS assistant.\n\n{tools}',
-
-      // Public Chat (optional)
-      publicChat: {
-        chatModel: 'claude-haiku-4-5-20251001',     // optional cheaper model
-        allowedContentTypes: ['api::article.article'],
-      },
 
       // Guardrails (optional)
       guardrails: {
@@ -233,8 +199,8 @@ forking the plugin -- see [Adding an AI Provider](#adding-an-ai-provider) below.
 | `POST` | `/api/ai-sdk/ask` | Non-streaming text generation |
 | `POST` | `/api/ai-sdk/ask-stream` | Streaming text via Server-Sent Events |
 | `POST` | `/api/ai-sdk/chat` | Chat with AI SDK UI message stream protocol |
-| `POST` | `/api/ai-sdk/public-chat` | Public chat with read-only tools and public memories |
-| `GET` | `/api/ai-sdk/widget.js` | Embeddable chat widget script |
+
+The public chat endpoint and widget moved to `strapi-plugin-ai-sdk-public-chat` in 2.0.0.
 
 MCP is no longer served by this plugin — see [MCP Server](#mcp-server) below for the current `/mcp` endpoint, which is served by Strapi itself.
 
@@ -627,7 +593,7 @@ The plugin includes a guardrail middleware that checks user input before it reac
 
 ### How It Works
 
-1. Extract user input (adapts to request shape: `messages` for `/chat`/`/public-chat`, `prompt` for `/ask`/`/ask-stream`)
+1. Extract user input (adapts to request shape: `messages` for any `/chat` path, `prompt` for `/ask`/`/ask-stream`)
 2. Run optional `beforeProcess` hook (for custom logic like external moderation APIs)
 3. Normalize text (NFKC, strip zero-width characters, collapse whitespace)
 4. Match against compiled regex patterns
@@ -1091,7 +1057,7 @@ server/src/
     types.ts                  # Shared types
     utils.ts                  # Controller helpers
   controllers/
-    controller.ts             # ask, askStream, chat, publicChat, serveWidget handlers
+    controller.ts             # ask, askStream, chat, getModelInfo, getToolSources handlers
     public-memory.ts          # CRUD for public memories
     # no mcp.ts — MCP has no controller in this plugin; /mcp is served by Strapi core
   services/service.ts         # AI service facade
@@ -1147,7 +1113,7 @@ npm run test:guardrails    # Guardrail safety tests (42 assertions)
 npm run test:api           # /ask and /ask-stream endpoint tests
 npm run test:stream        # Streaming visual test
 npm run test:chat          # Admin chat protocol test (/api/ai-sdk/chat)
-npm run test:public-chat   # Public/widget chat (/api/ai-sdk/public-chat)
+npm run test:mcp-scoping   # Per-tool MCP permission scoping (needs admin credentials)
 npm run test:unit          # Vitest unit tests (no Strapi needed)
 npm run test:ts:back       # Server TypeScript type checking (no Strapi needed)
 npm run test:ts:front      # Admin TypeScript type checking (no Strapi needed)
@@ -1163,21 +1129,17 @@ unrunnable:
 plugin::ai-sdk.controller.ask
 plugin::ai-sdk.controller.askStream
 plugin::ai-sdk.controller.chat
-plugin::ai-sdk.controller.publicChat
-plugin::ai-sdk.controller.serveWidget
 ```
 
 Grant them in **Settings → Users & Permissions → Roles → Public**, or from your app's
 `bootstrap()`.
 
-### Why `test:public-chat` exists
-
-`test:chat` covers the admin endpoint only. `/public-chat` — the surface the embeddable
-widget uses — had no coverage, which let a real bug ship: `publicChat.chatModel` was
-hardcoded to an Anthropic model id regardless of the configured provider, so pointing the
-plugin at Ollama broke the widget with `model '...' not found` while admin chat kept
-working. The suite asserts model resolution explicitly, and was verified to fail when that
-bug is reintroduced.
+> **Grant these on a test instance only.** `controller.chat` exposes the full
+> toolset — including `createContent`, `uploadMedia`, and `sendEmail` — to
+> whoever holds it. On the **Public** role that means anyone on the internet.
+> For a public-facing chat surface use
+> `strapi-plugin-ai-sdk-public-chat`, which takes an explicit tool allow-list
+> and defaults to exposing nothing.
 
 With authentication:
 

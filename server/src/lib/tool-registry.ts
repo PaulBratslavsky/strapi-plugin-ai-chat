@@ -29,7 +29,19 @@ export interface ToolDefinition {
   execute: (args: any, strapi: Core.Strapi, context?: ToolContext) => Promise<unknown>;
   /** If true, tool is only available in AI SDK chat, not exposed via MCP */
   internal?: boolean;
-  /** If true, tool is safe for unauthenticated public chat (read-only) */
+  /**
+   * Marks a tool as read-only and low-risk.
+   *
+   * This no longer grants anything. It used to decide what anonymous public
+   * chat could reach, which failed open — a tool author forgetting the flag
+   * was the only thing between a visitor and a write tool. Public chat now
+   * lives in `strapi-plugin-ai-sdk-public-chat`, which takes an explicit
+   * allow-list and defaults to exposing nothing.
+   *
+   * What remains is risk metadata: `tierFor()` reads it to label a tool
+   * 'read' vs 'write' in the permissions grid, to help a human decide what to
+   * tick. It is a hint, not a boundary.
+   */
   publicSafe?: boolean;
   /**
    * MCP permission tier. Defaults to 'read' when publicSafe is true,
@@ -125,14 +137,4 @@ export class ToolRegistry {
     }));
   }
 
-  /** Only tools marked safe for unauthenticated public chat */
-  getPublicSafe(): Map<string, ToolDefinition> {
-    const result = new Map<string, ToolDefinition>();
-    for (const [name, def] of this.tools) {
-      if (def.publicSafe) {
-        result.set(name, def);
-      }
-    }
-    return result;
-  }
 }
