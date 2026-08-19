@@ -192,17 +192,26 @@ forking the plugin -- see [Adding an AI Provider](#adding-an-ai-provider) below.
 
 ## API Endpoints
 
-### Content API (for frontend apps)
+### Content API
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/ai-sdk/ask` | Non-streaming text generation |
-| `POST` | `/api/ai-sdk/ask-stream` | Streaming text via Server-Sent Events |
-| `POST` | `/api/ai-sdk/chat` | Chat with AI SDK UI message stream protocol |
+**This plugin no longer exposes any content-API routes.** `/api/ai-sdk/ask`,
+`/ask-stream`, `/chat`, `/public-chat`, and `/widget.js` were all removed in
+2.0.0 and moved to
+[`strapi-plugin-ai-sdk-public-chat`](https://www.npmjs.com/package/strapi-plugin-ai-sdk-public-chat).
 
-The public chat endpoint and widget moved to `strapi-plugin-ai-sdk-public-chat` in 2.0.0.
+They were permissioned per controller method, which cannot express "this
+caller may search but not send email". Granting `controller.chat` handed the
+holder every tool — and on the Public role, that meant anonymous visitors
+could reach `createContent`, `uploadMedia`, and `sendEmail`.
 
-MCP is no longer served by this plugin — see [MCP Server](#mcp-server) below for the current `/mcp` endpoint, which is served by Strapi itself.
+What remains are two surfaces that both scope **per tool**:
+
+| Surface | Credential | Scoped by |
+|---|---|---|
+| Admin panel chat | admin session | RBAC role grants |
+| `/mcp` | admin API token | token grants |
+
+MCP is served by Strapi itself — see [MCP Server](#mcp-server).
 
 ### Admin API (admin panel only)
 
@@ -211,90 +220,6 @@ MCP is no longer served by this plugin — see [MCP Server](#mcp-server) below f
 | `POST` | `/ai-sdk/chat` | Admin chat with full tool access |
 
 All routes with user input are protected by the guardrail middleware.
-
-### POST `/api/ai-sdk/ask`
-
-Generate a text response (non-streaming).
-
-**Request:**
-
-```json
-{
-  "prompt": "What is the capital of France?",
-  "system": "You are a helpful geography assistant."
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `prompt` | string | Yes | The user's question or prompt |
-| `system` | string | No | System prompt override |
-
-**Response:**
-
-```json
-{
-  "data": {
-    "text": "The capital of France is Paris."
-  }
-}
-```
-
-### POST `/api/ai-sdk/ask-stream`
-
-Streaming text generation via Server-Sent Events.
-
-**Request:** Same as `/ask`
-
-**Response:** SSE stream
-
-```
-data: {"text":"The"}
-data: {"text":" capital"}
-data: {"text":" of France is Paris."}
-data: [DONE]
-```
-
-### POST `/api/ai-sdk/chat`
-
-Chat endpoint using the AI SDK UI message stream protocol. Compatible with the `useChat` hook from `@ai-sdk/react`. Supports multi-turn conversation with tool calling.
-
-**Request:**
-
-```json
-{
-  "messages": [
-    { "role": "user", "content": "Hello!" },
-    { "role": "assistant", "content": "Hi there! How can I help you?" },
-    { "role": "user", "content": "List all my content types" }
-  ],
-  "system": "You are a helpful assistant."
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `messages` | array | Yes | Array of message objects with `role` and `content` |
-| `system` | string | No | System prompt override |
-
-**Response:** UI message stream (`x-vercel-ai-ui-message-stream: v1` protocol) with text deltas and tool call events.
-
-## Built-in Tools
-
-The AI assistant has access to these tools. Tools marked as **public** are also exposed via MCP.
-
-| Tool | MCP Name | Description |
-|------|----------|-------------|
-| `listContentTypes` | `list_content_types` | List all Strapi content types and components with their fields and relations |
-| `searchContent` | `search_content` | Search and query any content type with filters, sorting, and pagination |
-| `findOneContent` | `find_one_content` | Fetch a single document by ID |
-| `aggregateContent` | `aggregate_content` | Count, group, and analyze content (faster than searchContent for analytics) |
-| `createContent` | `create_content` | Create a new document in any content type |
-| `updateContent` | `update_content` | Update an existing document in any content type |
-| `uploadMedia` | `upload_media` | Upload a media file (from a URL or base64) to the Media Library |
-| `sendEmail` | `send_email` | Send emails via the configured email provider (e.g. Resend) |
-
-These 8 tools are the ones exposed over MCP (see [MCP Server](#mcp-server)); the plugin also has chat-only tools (memory, notes, tasks) that never leave the admin/public chat paths. Additionally, the AI SDK automatically discovers tools from other installed extension plugins — see [`docs/plugin-contract.md`](./docs/plugin-contract.md) for the discovery contract. For example, with `strapi-plugin-ai-sdk-yt-transcripts` and `strapi-plugin-ai-sdk-yt-embeddings` installed, the AI also has access to transcript fetching/search tools and semantic YouTube-knowledge search.
 
 ### Tool Details
 
@@ -620,7 +545,7 @@ import { useChat } from '@ai-sdk/react';
 
 export default function Chat() {
   const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
-    api: 'http://localhost:1337/api/ai-sdk/chat',
+    api: 'http://localhost:1337/api/ai-sdk-public-chat/chat',
   });
 
   return (
@@ -652,7 +577,7 @@ export default function Chat() {
 ### Non-streaming request
 
 ```typescript
-const response = await fetch('http://localhost:1337/api/ai-sdk/ask', {
+const response = await fetch('http://localhost:1337/api/ai-sdk-public-chat/ask', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -667,7 +592,7 @@ console.log(data.text);
 ### Streaming request
 
 ```typescript
-const response = await fetch('http://localhost:1337/api/ai-sdk/ask-stream', {
+const response = await fetch('http://localhost:1337/api/ai-sdk-public-chat/ask-stream', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ prompt: 'Write a short story about a robot' }),
@@ -696,12 +621,12 @@ while (true) {
 
 ```bash
 # Non-streaming
-curl -X POST http://localhost:1337/api/ai-sdk/ask \
+curl -X POST http://localhost:1337/api/ai-sdk-public-chat/ask \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Hello, how are you?"}'
 
 # Streaming
-curl -N -X POST http://localhost:1337/api/ai-sdk/ask-stream \
+curl -N -X POST http://localhost:1337/api/ai-sdk-public-chat/ask-stream \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Count from 1 to 10"}'
 ```
@@ -1109,42 +1034,34 @@ docs/                           # Architecture + guardrails + email guides
 The plugin uses end-to-end integration tests against a running Strapi instance:
 
 ```bash
-npm run test:guardrails    # Guardrail safety tests (42 assertions)
-npm run test:api           # /ask and /ask-stream endpoint tests
-npm run test:stream        # Streaming visual test
-npm run test:chat          # Admin chat protocol test (/api/ai-sdk/chat)
 npm run test:mcp-scoping   # Per-tool MCP permission scoping (needs admin credentials)
 npm run test:unit          # Vitest unit tests (no Strapi needed)
 npm run test:ts:back       # Server TypeScript type checking (no Strapi needed)
 npm run test:ts:front      # Admin TypeScript type checking (no Strapi needed)
 ```
 
-### Prerequisite: grant the Public role
+### Prerequisite: an admin token with tool grants
 
-The HTTP suites call content-API routes, so they return **403 until the Public role is
-granted** the plugin's actions. This is easy to miss and silently makes the whole suite
-unrunnable:
+The HTTP suites talk to `/mcp`, which needs an **admin** API token (not a
+content-API one). A token with no grants authenticates fine and returns an
+empty `tools/list`, so the suite fails in a way that looks like a broken
+server rather than a missing permission.
 
+Mint one in **Settings → Administration Panel → Admin Tokens** and tick the
+tools it should reach under each plugin's section, then:
+
+```bash
+export STRAPI_ADMIN_TOKEN=your-admin-token
 ```
-plugin::ai-sdk.controller.ask
-plugin::ai-sdk.controller.askStream
-plugin::ai-sdk.controller.chat
-```
 
-Grant them in **Settings → Users & Permissions → Roles → Public**, or from your app's
-`bootstrap()`.
-
-> **Grant these on a test instance only.** `controller.chat` exposes the full
-> toolset — including `createContent`, `uploadMedia`, and `sendEmail` — to
-> whoever holds it. On the **Public** role that means anyone on the internet.
-> For a public-facing chat surface use
-> `strapi-plugin-ai-sdk-public-chat`, which takes an explicit tool allow-list
-> and defaults to exposing nothing.
+There is no Public-role prerequisite any more. This plugin serves no
+content-API routes as of 2.0.0 — if you are looking for the anonymous
+surface, it lives in `strapi-plugin-ai-sdk-public-chat`.
 
 With authentication:
 
 ```bash
-STRAPI_TOKEN=your-api-token npm run test:guardrails
+STRAPI_ADMIN_TOKEN=your-admin-token npm run test:e2e
 ```
 
 **MCP E2E suite** (separate from the scripts above — vitest-based, lives in `tests/e2e/`):

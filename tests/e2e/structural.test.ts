@@ -3,7 +3,7 @@
  *
  * Requires a running Strapi host (>= 5.47) with `mcp: { enabled: true }` and
  * an admin API token exported as STRAPI_ADMIN_TOKEN. The token must grant all
- * four `plugin::ai-sdk.mcp.*` permissions (read, write, destructive,
+ * individual `plugin::<owner>.tool.<slug>` permissions (one per tool,
  * maintenance) — the `EXPECTED_BUILTIN_TOOLS` list below includes
  * `send_email`, which lives in the `destructive` tier, and the
  * yt-transcripts/yt-embeddings namespace counts below depend on

@@ -15,21 +15,6 @@ export default {
       enabled: true,
       maxInputLength: 10000,
     },
-    publicChat: {
-      /** Content type UIDs the public chat is allowed to query (e.g. ['api::article.article']) */
-      allowedContentTypes: [] as string[],
-      /**
-       * Model for public chat. Leave undefined to inherit the main `chatModel`,
-       * which keeps the widget working whatever provider is configured. Set it
-       * explicitly (e.g. 'claude-haiku-4-5-20251001') to use a cheaper model for
-       * public traffic when running on Anthropic.
-       */
-      chatModel: undefined as string | undefined,
-      /** Max conversation messages for public chat */
-      maxConversationMessages: 10,
-      /** Max tool call steps for public chat */
-      maxSteps: 5,
-    },
   },
   validator(config: unknown) {
     if (typeof config !== 'object' || config === null) {

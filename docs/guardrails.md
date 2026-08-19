@@ -244,19 +244,19 @@ graph TB
     UIFormat -->|"content string"| Content["Use content directly"]
 ```
 
-`/chat`, `/public-chat`, `/ask`, and `/ask-stream` all reach a real
-extraction branch. `/mcp` never enters this plugin's route stack at all
+`/chat` reaches the messages branch; `/ask` and `/ask-stream` reach the
+prompt branch. `/mcp` never enters this plugin's route stack at all
 (see [MCP Tool Calls Are Not Guardrail-Screened](#mcp-tool-calls-are-not-guardrail-screened)).
-`/public-chat` reuses the exact extraction logic used for `/chat` — same
-`messages[]` parsing, same UIMessage/legacy-content handling — but is
-labelled with its own `route: 'public-chat'` value so blocked-response
-selection and any logging can distinguish the public surface from the
-authenticated one. See [Overview](#overview).
+
+As of 2.0.0 this plugin serves only the admin panel, so `/chat` here is the
+authenticated admin route. The anonymous surface moved to
+`strapi-plugin-ai-sdk-public-chat`, which ships its own screening rather than
+borrowing this — deliberately, since a plugin that depends on this one should
+not require this one to know its route paths.
 
 | Route | Body Shape | Extracted Text |
 |---|---|---|
 | `/chat` | `{ messages: UIMessage[] }` | Last `role: 'user'` message -- concatenate text parts (`route: 'chat'`) |
-| `/public-chat` | `{ messages: UIMessage[] }` | Last `role: 'user'` message -- concatenate text parts (`route: 'public-chat'`) |
 | `/ask`, `/ask-stream` | `{ prompt: string }` | `prompt` field directly |
 
 ### Input Normalization
@@ -303,7 +303,7 @@ Each pattern is a regex string compiled with the `i` (case-insensitive) flag. Th
 
 When a request is blocked, the response format depends on the route:
 
-**Chat routes** (`/chat` and `/public-chat`) return an SSE stream with the blocked message, so the admin UI (and the embeddable widget) render it as a normal assistant reply:
+**The chat route** (`/chat`) returns an SSE stream with the blocked message, so the admin UI (and the embeddable widget) render it as a normal assistant reply:
 
 ```
 data: {"type":"text-delta","delta":"I'm unable to process that request. It was flagged by content safety guardrails."}

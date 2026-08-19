@@ -20,7 +20,7 @@ export const EXPECTED_BUILTIN_TOOLS = [
  * Connect an MCP client to the official Strapi endpoint. Admin API tokens
  * authenticate here — Content API tokens will not work.
  *
- * The token must grant all four `plugin::ai-sdk.mcp.*` permissions (read,
+ * The token must grant the individual `plugin::<owner>.tool.<slug>` permissions (one per tool;
  * write, destructive, maintenance). `send_email` in EXPECTED_BUILTIN_TOOLS
  * sits in the `destructive` tier; yt-transcripts' `fetchTranscript` and
  * yt-embeddings' `searchYtKnowledge` sit in the `maintenance` tier —
@@ -32,7 +32,7 @@ export async function connect(token: string | undefined = TOKEN): Promise<Client
   if (!token) {
     throw new Error(
       'STRAPI_ADMIN_TOKEN is not set. Mint an admin API token in Settings > API Tokens ' +
-        '(Admin) with all four "plugin::ai-sdk.mcp.*" permissions (read, write, destructive, ' +
+        '(Admin) and tick the tools it should reach under each plugin\'s section. ' +
         'maintenance) and export it before running the E2E suite.',
     );
   }

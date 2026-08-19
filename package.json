@@ -44,10 +44,6 @@
     "test:unit:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts tests/e2e/structural.test.ts",
     "test:e2e:live": "E2E_LIVE=1 vitest run --config vitest.e2e.config.ts",
-    "test:api": "npx tsx tests/ai-sdk.test.ts",
-    "test:stream": "node tests/test-stream.mjs",
-    "test:chat": "node tests/test-chat.mjs",
-    "test:guardrails": "npx tsx tests/test-guardrails.ts",
     "test:mcp-scoping": "node tests/test-mcp-scoping.mjs"
   },
   "dependencies": {

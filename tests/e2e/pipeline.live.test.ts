@@ -8,7 +8,7 @@
  * entirely otherwise. See tests/e2e/client.ts for the connect() helper and
  * its note on required permission tiers.
  *
- * The token needs MORE than client.ts's three `plugin::ai-sdk.mcp.*` tiers:
+ * The token needs MORE tools granted than client.ts's baseline:
  * the pre-run cleanup below (see `deleteExistingTranscript`) also calls the
  * content-manager-derived list/delete tools for the Transcript content type
  * (`plugin::ai-sdk-yt-transcripts.transcript`), which require
@@ -79,7 +79,7 @@ function findUniqueContentManagerTool(prefix: string): string {
       `pre-existing transcript for ${VIDEO_ID} first (fetchTranscript is cache-and-return-early, ` +
       `and the auto-embed hook only fires on afterCreate). Either the admin token lacks ` +
       `content-manager read + delete permissions on the Transcript content type (needed in ` +
-      `addition to the three "plugin::ai-sdk.mcp.*" actions — see the header comment of this ` +
+      `in addition to the baseline tool grants — see the header comment of this ` +
       `file), the content type is no longer visible to content-manager, or its tool-naming ` +
       `scheme changed in a way this substring match no longer captures. ` +
       `Existing "${prefix}*" tools: ${candidates.join(', ') || '(none)'}. ` +
