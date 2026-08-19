@@ -1,12 +1,5 @@
 import type { ToolRegistry, ToolDefinition } from '../../lib/tool-registry';
-
-/** Convert camelCase to snake_case, matching the MCP server's naming convention */
-function toSnakeCase(str: string): string {
-  return str
-    .replace(/:/g, '__')
-    .replace(/-/g, '_')
-    .replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-}
+import { toSnakeCase } from '../naming';
 
 /**
  * Extract a human-readable type string from a Zod field.
@@ -29,6 +22,11 @@ function extractType(field: any): string {
       return extractType(def.innerType);
     case 'default':
       return extractType(def.innerType);
+    case 'pipe':
+      // z.preprocess(...) (used by jsonCoercible) compiles to a ZodPipe whose
+      // `out` side is the schema we actually validate against — unwrap to it
+      // instead of surfacing the internal "pipe" implementation type.
+      return extractType(def.out);
     case 'record':
       return 'object';
     case 'array':
@@ -79,10 +77,21 @@ export function generateToolGuide(registry: ToolRegistry): string {
     'then use `search_content` to query them.\n'
   );
 
-  // Group tools by source
+  // Group tools by source. Plugin sources may have declared metadata via
+  // `getMeta()` (collected in bootstrap.ts); when present, it replaces the
+  // raw source id as the heading and supplies a description/keywords blurb —
+  // this is where the retired server's `instructions` content now lives.
   for (const source of sources) {
-    const heading = source.id === 'built-in' ? 'Built-in Tools' : source.label;
+    const meta = source.id === 'built-in' ? undefined : registry.getSourceMeta(source.id);
+    const heading = source.id === 'built-in' ? 'Built-in Tools' : (meta?.label ?? source.label);
     sections.push(`## ${heading}\n`);
+
+    if (meta?.description) {
+      sections.push(`${meta.description}\n`);
+    }
+    if (meta?.keywords && meta.keywords.length > 0) {
+      sections.push(`_Keywords: ${meta.keywords.join(', ')}_\n`);
+    }
 
     for (const toolName of source.tools) {
       const def = tools.get(toolName);

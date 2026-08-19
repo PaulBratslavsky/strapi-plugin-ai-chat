@@ -7,4 +7,5 @@ export const sendEmailTool: ToolDefinition = {
   schema: sendEmailSchema,
   execute: async (args, strapi) => sendEmail(strapi, args),
   internal: false,
+  access: 'destructive',
 };

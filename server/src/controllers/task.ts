@@ -8,6 +8,22 @@ function getAdminUserId(ctx: Context): number | null {
   return typeof id === 'number' ? id : null;
 }
 
+/**
+ * Derive priority from the consequence x impact score (1-25).
+ *
+ * The task UI and the manageTask tool both present consequence x impact as the
+ * ranking mechanism, but priority was previously whatever the caller sent (or
+ * 'medium'), so a 5x5 task could sit at 'medium' forever and the score was
+ * purely decorative. Deriving it server-side keeps every client consistent.
+ */
+function derivePriority(consequence: number, impact: number): 'low' | 'medium' | 'high' | 'urgent' {
+  const score = consequence * impact;
+  if (score >= 20) return 'urgent';
+  if (score >= 12) return 'high';
+  if (score >= 6) return 'medium';
+  return 'low';
+}
+
 const taskController = ({ strapi }: { strapi: Core.Strapi }) => ({
   async find(ctx: Context) {
     const adminUserId = getAdminUserId(ctx);
@@ -41,7 +57,10 @@ const taskController = ({ strapi }: { strapi: Core.Strapi }) => ({
         description: body.description,
         content: body.content,
         done: body.done ?? false,
-        priority: body.priority ?? 'medium',
+        priority: derivePriority(
+          (body.consequence as number) ?? 3,
+          (body.impact as number) ?? 3,
+        ),
         consequence: body.consequence ?? 3,
         impact: body.impact ?? 3,
         dueDate: body.dueDate,

@@ -50,21 +50,12 @@ export function extractUserInput(ctx: Context): { text: string; route: string } 
   const method = ctx.method;
   const body = ctx.request.body as Record<string, unknown> | undefined;
 
-  // MCP GET/DELETE — session management only, skip guardrails
-  if (path.endsWith('/mcp') && (method === 'GET' || method === 'DELETE')) {
-    return null;
-  }
-
-  // MCP POST — check JSON-RPC params
-  if (path.endsWith('/mcp') && method === 'POST') {
-    if (body && typeof body === 'object' && 'params' in body) {
-      return { text: JSON.stringify(body.params), route: 'mcp' };
-    }
-    return null;
-  }
-
-  // Chat route — extract last user message text
-  if (path.endsWith('/chat') && method === 'POST') {
+  // Chat routes — extract last user message text.
+  // /public-chat is the unauthenticated embeddable widget endpoint; it uses the
+  // same request body shape as /chat, but is labelled with its own route so
+  // logging/telemetry can distinguish the public surface from the authenticated one.
+  if ((path.endsWith('/chat') || path.endsWith('/public-chat')) && method === 'POST') {
+    const route = path.endsWith('/public-chat') ? 'public-chat' : 'chat';
     if (body && Array.isArray(body.messages)) {
       const messages = body.messages as Array<{ role?: string; parts?: Array<{ type?: string; text?: string }>; content?: string }>;
       // Find last user message
@@ -78,13 +69,13 @@ export function extractUserInput(ctx: Context): { text: string; route: string } 
             .filter((p) => p.type === 'text' && typeof p.text === 'string')
             .map((p) => p.text);
           if (textParts.length > 0) {
-            return { text: textParts.join(' '), route: 'chat' };
+            return { text: textParts.join(' '), route };
           }
         }
 
         // Legacy format: content string
         if (typeof msg.content === 'string') {
-          return { text: msg.content, route: 'chat' };
+          return { text: msg.content, route };
         }
       }
     }

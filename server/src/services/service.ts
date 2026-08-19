@@ -10,8 +10,10 @@ import {
   DEFAULT_MAX_STEPS,
   DEFAULT_PUBLIC_MAX_STEPS,
   DEFAULT_PUBLIC_CHAT_MODEL,
+  DEFAULT_MODEL,
 } from '../lib/types';
 import { createTools, createPublicTools, describeTools } from '../tools';
+import type { CallerAbility } from '../lib/tool-registry';
 import { trimMessages } from '../lib/trim-messages';
 
 const DEFAULT_PREAMBLE =
@@ -83,7 +85,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
      * Chat with messages - returns raw stream for UI message stream response
      * Compatible with AI SDK UI hooks (useChat)
      */
-    async chat(messages: UIMessage[], options?: { system?: string; adminUserId?: number; enabledToolSources?: string[] }): Promise<StreamTextRawResult> {
+    async chat(messages: UIMessage[], options?: { system?: string; adminUserId?: number; enabledToolSources?: string[]; ability?: CallerAbility }): Promise<StreamTextRawResult> {
       const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
       const maxMessages = config?.maxConversationMessages ?? DEFAULT_MAX_CONVERSATION_MESSAGES;
       const maxOutputTokens = config?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
@@ -93,7 +95,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
       const trimmedMessages = trimMessages(messages, maxMessages);
 
       const modelMessages = await convertToModelMessages(trimmedMessages);
-      const tools = createTools(strapi, { adminUserId: options?.adminUserId, enabledToolSources: options?.enabledToolSources });
+      const tools = createTools(strapi, { adminUserId: options?.adminUserId, enabledToolSources: options?.enabledToolSources, ability: options?.ability });
       const toolsDescription = describeTools(tools);
       let system = composeSystemPrompt(config, toolsDescription, options?.system);
 
@@ -134,7 +136,12 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
       const maxMessages = publicConfig?.maxConversationMessages ?? DEFAULT_PUBLIC_MAX_CONVERSATION_MESSAGES;
       const maxOutputTokens = config?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
       const maxSteps = publicConfig?.maxSteps ?? DEFAULT_PUBLIC_MAX_STEPS;
-      const publicModel = publicConfig?.chatModel ?? DEFAULT_PUBLIC_CHAT_MODEL;
+      // Fall back to the MAIN chatModel, not a hardcoded Anthropic id. Public chat
+      // previously defaulted to claude-haiku regardless of provider, so pointing the
+      // plugin at a local runtime (Ollama, vLLM) broke the widget with
+      // "model 'claude-haiku-4-5-20251001' not found" while admin chat worked fine.
+      // Set publicChat.chatModel explicitly to use a cheaper model on Anthropic.
+      const publicModel = publicConfig?.chatModel ?? config?.chatModel ?? DEFAULT_MODEL;
       const allowedContentTypes = publicConfig?.allowedContentTypes ?? [];
       const publicToolSources = publicConfig?.publicToolSources;
 

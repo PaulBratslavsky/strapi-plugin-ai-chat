@@ -1,5 +1,10 @@
 # Plugin Tool Discovery & Enhanced Search
 
+> **Superseded in part by [plugin-contract.md](./plugin-contract.md)** as of
+> v1.1.0, which is the source of truth for the tool contract, namespacing,
+> Zod rules, and MCP permission tiers. This document is retained for its
+> historical rationale.
+
 > RFC for enabling cross-plugin tool registration so the AI SDK can automatically
 > discover and use tools from any installed Strapi plugin.
 

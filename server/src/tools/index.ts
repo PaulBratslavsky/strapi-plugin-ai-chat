@@ -3,6 +3,7 @@ import type { ToolSet } from 'ai';
 import { tool, zodSchema } from 'ai';
 import type { PluginInstance } from '../lib/types';
 import type { ToolContext } from '../lib/tool-registry';
+import { actionForTool } from '../mcp/permissions';
 
 export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet {
   const plugin = strapi.plugin('ai-sdk') as unknown as PluginInstance;
@@ -13,6 +14,7 @@ export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet
   }
 
   const enabledSources = context?.enabledToolSources;
+  const ability = context?.ability;
   const tools: ToolSet = {};
 
   for (const [name, def] of registry.getAll()) {
@@ -25,6 +27,11 @@ export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet
       }
       // Built-in tools (no __) are always included
     }
+
+    // Withhold tools the caller has no permission for. Same per-tool actions
+    // that gate /mcp, evaluated against whoever is calling: an admin user's
+    // role grants for chat, an admin token's grants for MCP.
+    if (ability && !ability.can(actionForTool(name))) continue;
 
     tools[name] = tool({
       description: def.description,

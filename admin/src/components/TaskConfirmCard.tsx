@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
 import { getToken, getBackendURL } from '../utils/auth';
@@ -166,6 +166,39 @@ export function TaskConfirmCard({ proposed }: Readonly<{ proposed: Proposed }>) 
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<CreatedTask | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Re-hydrate after a page reload.
+  //
+  // The tool result persisted in the conversation stays `pending_confirmation`
+  // forever — creating the task does not rewrite that message. So on a hard
+  // refresh this card would render the empty form again, making a task that was
+  // saved correctly look like it had lost its due date and severity.
+  //
+  // Matching on title mirrors the duplicate detection manageTask already uses,
+  // and the newest match wins so re-running the same proposal shows the latest.
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const token = getToken();
+        const res = await fetch(`${getBackendURL()}/ai-sdk/tasks`, {
+          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        });
+        if (!res.ok) return;
+
+        const body = (await res.json()) as { data?: CreatedTask[] };
+        const match = (body.data ?? []).find((t) => t.title === proposed.title);
+        if (match && !cancelled) setCreated(match);
+      } catch {
+        // Informational only — leave the form usable if the lookup fails.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [proposed.title]);
 
   const score = consequence != null && impact != null ? consequence * impact : null;
 

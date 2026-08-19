@@ -1,6 +1,4 @@
 import type { ModelMessage, ToolSet, StopCondition } from 'ai';
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import type { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { AIProvider } from './ai-provider';
 import type { ToolRegistry } from './tool-registry';
 import type { GuardrailConfig } from '../guardrails/types';
@@ -9,24 +7,34 @@ import type { GuardrailConfig } from '../guardrails/types';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyStopCondition = StopCondition<any>;
 
+/**
+ * Known-good Anthropic model ids, verified against the API on 2026-08-18.
+ *
+ * This is a reference list, NOT an allowlist — `chatModel` is typed `string`,
+ * so any model id works, including local ones like `gemma4:26b` when using the
+ * `openai-compatible` provider.
+ *
+ * Undated aliases are preferred over dated snapshots: every dated snapshot
+ * previously listed here had been retired by Anthropic, which silently broke
+ * the plugin's default. Aliases track the current release instead.
+ */
 export const CHAT_MODELS = [
-  'claude-sonnet-4-20250514',
-  'claude-opus-4-20250514',
-  'claude-3-5-sonnet-20241022',
-  'claude-3-5-haiku-20241022',
-  'claude-3-haiku-20240307',
+  'claude-sonnet-5',
+  'claude-opus-5',
+  'claude-fable-5',
+  'claude-haiku-4-5-20251001',
 ] as const;
 
 export type ChatModelName = (typeof CHAT_MODELS)[number];
 
-export const DEFAULT_MODEL: ChatModelName = 'claude-sonnet-4-20250514';
+export const DEFAULT_MODEL: ChatModelName = 'claude-sonnet-5';
+/**
+ * Not applied by default. Newer Anthropic models reject `temperature`
+ * ("`temperature` is deprecated for this model"), so the provider only sends it
+ * when a caller sets it explicitly. Kept for callers that opt in on a model
+ * known to accept it.
+ */
 export const DEFAULT_TEMPERATURE = 0.7;
-
-export interface MCPConfig {
-  sessionTimeoutMs?: number;
-  maxSessions?: number;
-  cleanupInterval?: number;
-}
 
 export const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 export const DEFAULT_MAX_CONVERSATION_MESSAGES = 15;
@@ -49,7 +57,10 @@ export interface PublicChatConfig {
 }
 
 export interface PluginConfig {
-  anthropicApiKey: string;
+  /** Provider-neutral API key. Preferred over the deprecated anthropicApiKey. */
+  apiKey?: string;
+  /** @deprecated Use `apiKey` instead. Kept as a fallback for existing installs. */
+  anthropicApiKey?: string;
   provider?: string;
   chatModel?: string;
   baseURL?: string;
@@ -58,7 +69,6 @@ export interface PluginConfig {
   maxConversationMessages?: number;
   /** Max tool call steps for admin chat (defaults to 3) */
   maxSteps?: number;
-  mcp?: MCPConfig;
   guardrails?: GuardrailConfig;
   publicChat?: PublicChatConfig;
 }
@@ -100,15 +110,7 @@ export function isPromptInput(input: GenerateInput): input is PromptInput {
 
 // --- Plugin instance types (shared across bootstrap, destroy, controllers) ---
 
-export interface MCPSession {
-  server: Server;
-  transport: StreamableHTTPServerTransport;
-  createdAt: number;
-}
-
 export interface PluginInstance {
   aiProvider?: AIProvider;
   toolRegistry?: ToolRegistry;
-  createMcpServer?: (() => Server) | null;
-  mcpSessions?: Map<string, MCPSession> | null;
 }

@@ -1,14 +1,16 @@
 import type { Core } from '@strapi/strapi';
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { createMcpServer } from './mcp/server';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { registerAiSdkMcpTools } from './mcp';
 import { AIProvider } from './lib/ai-provider';
 import { ToolRegistry } from './lib/tool-registry';
 import { builtInTools } from './tools/definitions';
+import { checkPluginCompat } from './lib/check-compat';
 import type { PluginConfig, PluginInstance } from './lib/types';
 
 const PLUGIN_ID = 'ai-sdk';
 
-const bootstrap = ({ strapi }: { strapi: Core.Strapi }) => {
+const bootstrap = async ({ strapi }: { strapi: Core.Strapi }) => {
   const plugin = strapi.plugin(PLUGIN_ID) as unknown as PluginInstance;
   const config = strapi.config.get<PluginConfig>(`plugin::${PLUGIN_ID}`);
 
@@ -16,9 +18,7 @@ const bootstrap = ({ strapi }: { strapi: Core.Strapi }) => {
   const registry = initializeToolRegistry(plugin);
   discoverPluginTools(strapi, registry);
 
-  plugin.createMcpServer = () => createMcpServer(strapi);
-  plugin.mcpSessions = new Map();
-  strapi.log.info(`[${PLUGIN_ID}] MCP endpoint available at: /api/${PLUGIN_ID}/mcp`);
+  await registerAiSdkMcpTools(strapi, registry);
 };
 
 export default bootstrap;
@@ -29,14 +29,32 @@ function initializeProvider(strapi: Core.Strapi, plugin: PluginInstance, config:
     return (modelId: string) => provider(modelId);
   });
 
+  // Built-in bring-your-own-model provider: any OpenAI-compatible local
+  // runtime (Ollama, vLLM, LM Studio, LocalAI, ...) works via config alone —
+  // no user code required. baseURL is required and validated lazily on
+  // first model use (see AIProvider.ensureModelFactory).
+  AIProvider.registerProvider('openai-compatible', ({ apiKey, baseURL }) => {
+    const provider = createOpenAICompatible({
+      name: 'openai-compatible',
+      baseURL: baseURL as string,
+      apiKey,
+    });
+    return (modelId: string) => provider(modelId);
+  });
+
   const aiProvider = new AIProvider();
-  const initialized = aiProvider.initialize(config);
+  const initialized = aiProvider.initialize(config, strapi.log);
 
   if (initialized) {
     plugin.aiProvider = aiProvider;
-    strapi.log.info(`[${PLUGIN_ID}] AI provider initialized with model: ${aiProvider.getChatModel()}`);
+    strapi.log.info(
+      `[${PLUGIN_ID}] AI provider configured: provider="${config?.provider ?? 'anthropic'}", model="${aiProvider.getChatModel()}". ` +
+      `Resolution happens lazily on first use.`
+    );
   } else {
-    strapi.log.warn(`[${PLUGIN_ID}] anthropicApiKey not configured, AI provider will not be available`);
+    strapi.log.warn(
+      `[${PLUGIN_ID}] No API key configured (set "apiKey", or the deprecated "anthropicApiKey"). AI provider will not be available.`
+    );
   }
 }
 
@@ -66,6 +84,18 @@ function discoverPluginTools(strapi: Core.Strapi, registry: ToolRegistry) {
 
       strapi.log.info(`[${PLUGIN_ID}] Found ai-tools service on plugin: ${pluginName}`);
 
+      // Diagnostic only — a mismatch warns but does not block registration.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const ownVersion = require('../../package.json').version as string;
+        const declared = (pluginInstance as any)?.package?.peerDependencies?.[
+          'strapi-plugin-ai-sdk'
+        ];
+        checkPluginCompat(strapi, pluginName, declared, ownVersion);
+      } catch {
+        // Version metadata is not always reachable; never block discovery.
+      }
+
       const contributed = aiToolsService.getTools();
       if (!Array.isArray(contributed)) continue;
 
@@ -73,7 +103,8 @@ function discoverPluginTools(strapi: Core.Strapi, registry: ToolRegistry) {
       if (count > 0) {
         strapi.log.info(`[${PLUGIN_ID}] Registered ${count} tools from plugin: ${pluginName}`);
 
-        // Collect optional source metadata for MCP instructions
+        // Collect optional source metadata; it feeds the tool-guide MCP
+        // resource (see mcp/resources/tool-guide.ts), not server instructions.
         const safeName = pluginName.replace(/[^a-zA-Z0-9_-]/g, '_');
         if (typeof aiToolsService.getMeta === 'function') {
           const meta = aiToolsService.getMeta();
