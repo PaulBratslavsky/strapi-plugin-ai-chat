@@ -2,9 +2,24 @@ import type { Core } from '@strapi/strapi';
 import type { z } from 'zod';
 import type { AccessTier } from '../mcp/access';
 
+/**
+ * Minimal shape of the CASL ability Strapi puts on `ctx.state.userAbility`.
+ * Both the admin session strategy and the admin-token strategy set it, so the
+ * same check covers a logged-in admin (RBAC role grants) and an admin API
+ * token (token grants).
+ */
+export interface CallerAbility {
+  can: (action: string) => boolean;
+}
+
 export interface ToolContext {
   adminUserId?: number;
   enabledToolSources?: string[];
+  /**
+   * Caller's ability. When present, tools the caller lacks permission for are
+   * withheld from the model. Omitted for non-HTTP callers, which are trusted.
+   */
+  ability?: CallerAbility;
 }
 
 export interface ToolDefinition {

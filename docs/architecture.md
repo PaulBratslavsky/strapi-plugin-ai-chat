@@ -14,6 +14,7 @@ A comprehensive guide to the Strapi v5 plugin that embeds an AI chat interface, 
   - [Guardrails Middleware](#guardrails-middleware)
   - [AI Provider Factory](#ai-provider-factory)
   - [Tool Registry](#tool-registry)
+  - [The Permission Model](#the-permission-model)
   - [TTS Provider Registry](#tts-provider-registry)
   - [Tool Logic Layer](#tool-logic-layer)
   - [Services](#services)
@@ -216,7 +217,7 @@ All plugin settings are defined in `config/index.ts` with sensible defaults:
 interface PluginConfig {
   anthropicApiKey: string;       // Required for AI features
   provider?: string;             // AI provider name (default: 'anthropic')
-  chatModel?: string;            // Model ID (default: 'claude-sonnet-4-20250514')
+  chatModel?: string;            // Model ID (default: 'claude-sonnet-5')
   baseURL?: string;              // Custom API base URL
   systemPrompt?: string;         // Custom system prompt (supports {tools} placeholder)
   typecastApiKey?: string;       // For TTS
@@ -239,7 +240,7 @@ export default {
     enabled: true,
     config: {
       anthropicApiKey: env('ANTHROPIC_API_KEY'),
-      chatModel: 'claude-sonnet-4-20250514',
+      chatModel: 'claude-sonnet-5',
       systemPrompt: 'You are a helpful CMS assistant.\n\n{tools}',
     },
   },
@@ -356,10 +357,19 @@ classDiagram
         +access?: 'read' | 'write' | 'destructive'
     }
 
+    class ToolContext {
+        +adminUserId?: number
+        +enabledToolSources?: string[]
+        +ability?: CallerAbility
+    }
+
+    AISDKTools --> ToolContext : filters by
+
     ToolRegistry --> ToolDefinition : stores
 
     class AISDKTools["tools/index.ts"] {
-        +createTools(strapi): ToolSet
+        +createTools(strapi, context?): ToolSet
+        +createPublicTools(strapi, allowed): ToolSet
         +describeTools(tools): string
     }
 
@@ -375,18 +385,28 @@ The `ToolRegistry` is the central source of truth for all tools. Two consumers r
 
 | Consumer | Method | Tools Included |
 |----------|--------|----------------|
-| `tools/index.ts` (AI SDK chat) | `getAll()` | All tools (including `internal: true`) |
-| `mcp/register-tools.ts` (MCP bridge, boot-time only) | `getPublic()` | Only non-internal tools |
+| `tools/index.ts` (AI SDK chat) | `getAll()` | Non-internal tools the **caller's role** grants, plus `internal: true` tools |
+| `mcp/register-tools.ts` (MCP bridge, boot-time only) | `getPublic()` | Only non-internal tools; each gated per-tool at request time |
 
-**A sample of built-in tools** (see [`docs/plugin-contract.md`](./plugin-contract.md#3-the-tooldefinition-interface) for the full list of all 14 and their MCP tiers):
+Both consumers ultimately enforce the **same per-tool actions** — see
+[The Permission Model](#the-permission-model) below. The registry itself is
+permission-agnostic; filtering happens in the consumers.
 
-| Name | Internal | `access` (MCP tier) | Description |
-|------|----------|----------------------|-------------|
+**A sample of built-in tools** (see [`docs/plugin-contract.md`](./plugin-contract.md#3-the-tooldefinition-interface) for the full list):
+
+| Name | Internal | `access` (risk metadata) | Description |
+|------|----------|--------------------------|-------------|
 | `listContentTypes` | No | read (`publicSafe`) | List all Strapi content types and components |
 | `searchContent` | No | read (`publicSafe`) | Search/query any content type |
 | `createContent` | No | write (default) | Create a new document |
 | `sendEmail` | No | destructive (explicit) | Send an email via the configured provider |
 | `saveMemory` | Yes | — (chat-only, never reaches MCP) | Save a chat memory |
+
+> **`access` no longer grants anything.** It used to select one of three
+> coarse tier actions (`mcp.read`/`.write`/`.destructive`). Permissions are
+> now **one action per tool**, so `access` survives purely as risk metadata —
+> useful for sorting and for deciding what to tick, but it no longer decides
+> what a caller may call. `tierFor()` is retained for the same reason.
 
 **Tool name conversion for MCP:**
 
@@ -396,6 +416,75 @@ The MCP server converts camelCase tool names to snake_case:
 - `createContent` -> `create_content`
 - Namespaced tools also convert their `__` separator and hyphens:
   `ai-sdk-yt-transcripts__fetchTranscript` -> `ai_sdk_yt_transcripts__fetch_transcript`
+
+---
+
+### The Permission Model
+
+The plugin exposes tools to two audiences that must be scoped independently:
+an **admin using chat inside Strapi** (bring-your-own model, potentially
+running locally) and an **external MCP client** holding an API token. The
+whole point is that these need not be the same — your internal model can be
+powerful while an outward-facing token stays narrow.
+
+Both are enforced with **one action registry**. What differs is who you grant
+the actions to:
+
+| | Audience | Granted on | Enforced in |
+|---|---|---|---|
+| **Internal chat** | Logged-in admin user | **RBAC role** (Settings → Roles) | `createTools()` filters by `ctx.state.userAbility` |
+| **External MCP** | Admin API token | **The token** (Settings → Admin Tokens) | Strapi checks each tool's `auth.policies` |
+
+This works because both of Strapi's admin auth strategies put a CASL ability
+on the same place — `ctx.state.userAbility` — the session strategy from the
+user's role, the `admin-token` strategy from the token's permission list. One
+check covers both callers.
+
+**Action id shape:**
+
+```
+plugin::<owning-plugin>.tool.<slug>
+
+plugin::ai-sdk.tool.search-content
+plugin::ai-sdk-yt-transcripts.tool.fetch-transcript
+```
+
+The owning plugin is `ai-sdk` for built-ins and the contributing plugin's id
+for tools discovered from other plugins — so **a plugin's tool permissions
+appear under that plugin's own section** in the roles grid, not buried under
+ai-sdk. `ai-sdk` discovers the tools; the owning plugin owns the permissions.
+
+> **Two slug rules, deliberately.** The permission uid uses **hyphens**
+> (`tool.fetch-transcript`) because Strapi's uid validator rejects
+> underscores. The MCP wire name uses **underscores**
+> (`ai_sdk_yt_transcripts__fetch_transcript`). Same tool, two encodings —
+> `actionForTool()` is the single place that maps between them, so never
+> hand-build an action id.
+
+```mermaid
+graph TD
+    Registry["ToolRegistry<br/>(all tools)"]
+
+    Registry --> Chat["createTools(ctx.ability)"]
+    Registry --> Bridge["registerToolsOnMcp()<br/>boot-time"]
+
+    Chat -->|"ability.can(actionForTool(name))"| ChatTools["Tools handed to the model<br/>in admin chat"]
+    Bridge -->|"auth: policies[actionForTool(name)]"| MCPTools["Tools exposed on /mcp"]
+
+    Role["Admin role grants"] -.-> Chat
+    Token["Admin API token grants"] -.-> MCPTools
+```
+
+**Failure mode to know:** `createTools()` filters *only when an ability is
+supplied*. Non-HTTP callers (tests, programmatic use) pass none and are
+trusted with the full set. That keeps internal callers working, but it means
+a new HTTP entry point that forgets to pass `ctx.state.userAbility` silently
+gets **unfiltered** tools. Any new route that builds a toolset must pass the
+ability through.
+
+`publicChat` is deliberately outside all of this: anonymous callers have no
+ability, so it uses `createPublicTools()` and is scoped by `publicSafe` plus
+explicit config allow-lists instead.
 
 ---
 
@@ -569,10 +658,10 @@ sequenceDiagram
     alt Strapi < 5.47 or mcp.enabled !== true
         Bridge-->>Boot: log + return (no tools registered)
     else enabled
-        Bridge->>Perms: registerMany(mcp.read/write/destructive actions)
+        Bridge->>Perms: registerMany(one action per tool, grouped by owning plugin)
         loop for each registry.getPublic() tool
-            Bridge->>Bridge: toSnakeCase(name), tierFor(def)
-            Bridge->>MCP: registerTool({ name, schema, auth: {policies:[tierAction]}, handler })
+            Bridge->>Bridge: toSnakeCase(name), actionForTool(name)
+            Bridge->>MCP: registerTool({ name, schema, auth: {policies:[toolAction]}, handler })
             Note over Bridge: try/catch per tool — one bad tool logs<br/>a warning and is skipped, boot continues
         end
         Bridge->>MCP: registerResource(strapi://ai-sdk/tools/guide)
@@ -597,10 +686,11 @@ sequenceDiagram
   `registerAiSdkMcpTools()` returns, this plugin's involvement with MCP is
   over until the next boot — `strapi.ai.mcp.registerTool()`'s `createHandler`
   closure is what actually runs on each `tools/call`.
-- Authorization is `auth: { policies: [{ action }] }` per tool
-  (`plugin::ai-sdk.mcp.read|write|destructive`), not a single blanket
-  `handle` permission on the whole endpoint. See
-  [`docs/plugin-contract.md`](./plugin-contract.md#4-mcp-permission-tiers).
+- Authorization is `auth: { policies: [{ action }] }` per tool — **one action
+  per tool** (`plugin::<owner>.tool.<slug>`), not a single blanket `handle`
+  permission on the whole endpoint, and no longer the three coarse tiers the
+  first migration shipped. See
+  [The Permission Model](#the-permission-model).
 - A `guardSize()` backstop substitutes a structured "too large, paginate"
   error for any result whose doubled wire size (content + structuredContent)
   would exceed ~1&nbsp;MB, since MCP clients reject oversized results with an
@@ -864,8 +954,9 @@ sequenceDiagram
     end
 
     Controller->>Controller: validateChatBody()
-    Controller->>Service: chat(messages, {system})
-    Service->>Service: createTools(strapi) from ToolRegistry
+    Controller->>Service: chat(messages, {system, ability: ctx.state.userAbility})
+    Service->>Service: createTools(strapi, {ability}) from ToolRegistry
+    Note over Service: RBAC — tools the admin's role does not<br/>grant are never handed to the model
     Service->>Service: composeSystemPrompt()
     Service->>AIProvider: streamRaw({messages, system, tools})
     AIProvider->>Claude: streamText() -> Anthropic API
@@ -1050,12 +1141,17 @@ export default {
 ```
 
 Either way, the tool is automatically available in:
-- **AI Chat** (via `createTools()` which reads `getAll()`)
+- **AI Chat** (via `createTools()` which reads `getAll()`, filtered by the
+  calling admin's role grants)
 - **MCP** (via the boot-time bridge in `mcp/register-tools.ts`, which reads
   `getPublic()` — skipped for `internal: true` tools — and gates the tool
-  behind `plugin::ai-sdk.mcp.read` by default, or `.write`/`.destructive`
-  depending on `publicSafe`/`access`; see
+  behind its own `plugin::<owner>.tool.<slug>` action; see
   [`docs/plugin-contract.md`](./plugin-contract.md))
+
+A permission action is registered for the new tool automatically, under the
+**owning plugin's** section in Settings → Roles. Nothing needs to be declared
+by hand. Note that the action starts **ungranted** — a brand-new tool is
+invisible to every role and token until someone ticks it.
 
 No changes to `tools/index.ts` or `mcp/register-tools.ts` needed — the bridge
 picks up newly-registered tools automatically the next time Strapi boots.
@@ -1185,10 +1281,15 @@ export default ({ env }) => ({
 });
 ```
 
-Scoping which tools a given client can reach is done per **Admin API
-token**, by granting a subset of `plugin::ai-sdk.mcp.read` /
-`.write` / `.destructive` on that token's role — not through plugin
-config. See [`docs/plugin-contract.md`](./plugin-contract.md#4-mcp-permission-tiers).
+Scoping which tools a given client can reach is done per **Admin API token**,
+by granting that token the individual `plugin::<owner>.tool.<slug>` actions
+for the tools it should see — not through plugin config. A token granted two
+actions lists exactly two tools from `tools/list`; the rest are invisible to
+it, not merely un-callable.
+
+This is the external half of [The Permission Model](#the-permission-model) —
+grants on a **token** scope MCP, grants on a **role** scope internal chat.
+See [`docs/plugin-contract.md`](./plugin-contract.md).
 
 ---
 
@@ -1286,7 +1387,7 @@ server/src/
   lib/
     types.ts                        # Shared types (PluginConfig, PluginInstance, etc.)
     ai-provider.ts                  # AIProvider class with static provider registry
-    tool-registry.ts                # ToolRegistry class
+    tool-registry.ts                # ToolRegistry class + ToolContext/CallerAbility
     utils.ts                        # Controller helpers (validation, SSE)
     tts/
       index.ts                      # TTSRegistry class + createTTSRegistry()
@@ -1302,7 +1403,7 @@ server/src/
     admin/index.ts                  # Admin routes (/chat, /tool-sources, conversations, memories, tasks, notes) + guardrail middleware
     # /mcp is not a route of this plugin — it's served by Strapi core (strapi.ai.mcp)
   tools/
-    index.ts                        # createTools() + describeTools() bridge to registry
+    index.ts                        # createTools() (RBAC-filtered) + createPublicTools() + describeTools()
     definitions/
       index.ts                      # Barrel: exports builtInTools array
       list-content-types.ts         # listContentTypes tool definition (publicSafe)
@@ -1324,11 +1425,11 @@ server/src/
     manage-task.ts, schema-utils.ts # pure Strapi-coupled business logic + Zod schemas
   mcp/                              # the bridge onto Strapi's official MCP server (v1.1.0+)
     index.ts                        # registerAiSdkMcpTools(strapi, registry) — entry point called from bootstrap.ts
-    permissions.ts                  # registers the 3 plugin::ai-sdk.mcp.* admin actions
+    permissions.ts                  # one admin action per tool + actionForTool(); grouped by owning plugin
     register-tools.ts               # registerToolsOnMcp() — walks registry.getPublic(), calls strapi.ai.mcp.registerTool()
     register-resources.ts           # registers the strapi://ai-sdk/tools/guide resource
-    access.ts                       # tierFor()/actionFor() — access tier derivation
-    naming.ts                       # toSnakeCase()/toTitle() — MCP name + title conversion
+    access.ts                       # tierFor() — risk metadata only; no longer grants anything
+    naming.ts                       # toSnakeCase()/toTitle()/toBareMcpName()/toActionSlug() — wire + uid slugs
     size-guard.ts                   # guardSize() — ~1MB wire-size backstop
     resources/
       tool-guide.ts                 # generateToolGuide() — builds the tool-guide markdown from the registry

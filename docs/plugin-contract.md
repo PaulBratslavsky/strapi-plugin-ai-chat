@@ -176,29 +176,67 @@ extension plugins (see below).
 
 ---
 
-## 4. MCP permission tiers
+## 4. Per-tool permissions
 
-The official MCP server gates every custom tool behind an admin permission
-`action` string on `auth.policies`. A token only sees a tool in `tools/list`
-if its role grants that action. ai-sdk registers four actions of its own
-(`server/src/mcp/permissions.ts`), under `section: 'plugins'` /
-`pluginName: 'ai-sdk'`, which Strapi's action-provider turns into
-`plugin::ai-sdk.*` ids:
+> **Superseded:** earlier revisions of this document described four coarse
+> tier actions (`plugin::ai-sdk.mcp.read`/`.write`/`.destructive`/
+> `.maintenance`). Those actions no longer exist. Permissions are now **one
+> action per tool**. If you are following an older guide, the tier ids it
+> names cannot be granted.
 
-| Action id | Displayed as | Covers |
+Every custom tool is gated behind an admin permission `action` string on
+`auth.policies`. A caller only sees a tool in `tools/list` if it holds that
+action — gating filters discovery, not just execution.
+
+ai-sdk registers **one action per registered tool**
+(`server/src/mcp/permissions.ts`), under `section: 'plugins'`, with
+`pluginName` set to the **owning plugin**:
+
+```
+plugin::<owning-plugin>.tool.<slug>
+
+plugin::ai-sdk.tool.search-content
+plugin::ai-sdk.tool.send-email
+plugin::ai-sdk-yt-transcripts.tool.fetch-transcript
+```
+
+Built-ins are owned by `ai-sdk`; a tool contributed by another plugin is
+owned by that plugin. The practical effect: **a plugin's tool permissions
+appear under that plugin's own section** in the roles grid rather than being
+buried under ai-sdk. ai-sdk discovers the tools; the owning plugin owns the
+permissions. A plugin therefore stays lean — responsible only for its own
+tools — and uninstalling it takes its actions with it.
+
+### Slug rules
+
+`toActionSlug()` maps the bare MCP name to the uid segment, replacing
+underscores with **hyphens**. This is not cosmetic: Strapi's uid validator
+rejects underscores, and a violation is only caught at boot, not by
+type-checking. So the same tool carries two encodings:
+
+| | Example |
+|---|---|
+| MCP wire name | `ai_sdk_yt_transcripts__fetch_transcript` |
+| Permission uid | `plugin::ai-sdk-yt-transcripts.tool.fetch-transcript` |
+
+Always derive ids with `actionForTool()` — never hand-build them.
+
+### Two audiences, one action registry
+
+The same actions gate both consumers; what differs is who you grant them to:
+
+| Audience | Granted on | Enforced in |
 |---|---|---|
-| `plugin::ai-sdk.mcp.read` | Use read-only AI SDK MCP tools | `listContentTypes`, `searchContent`, `findOneContent`, `aggregateContent`, and 7 of the 9 `yt-transcripts`/`yt-embeddings` tools (all but `fetchTranscript` and `searchYtKnowledge`) |
-| `plugin::ai-sdk.mcp.write` | Use content-mutating AI SDK MCP tools | `createContent`, `updateContent`, `uploadMedia` |
-| `plugin::ai-sdk.mcp.destructive` | Use irreversible / external-side-effect AI SDK MCP tools | `sendEmail` |
-| `plugin::ai-sdk.mcp.maintenance` | Use expensive / external-API-cost AI SDK MCP tools | `yt-transcripts`' `fetchTranscript` (hits YouTube directly, then cascades into yt-embeddings' `afterCreate` hook — an OpenAI embeddings call plus pgvector writes) and `yt-embeddings`' `searchYtKnowledge` (calls OpenAI `embed()` per query — real per-call cost even though it mutates nothing) |
+| Admin using chat in Strapi | **RBAC role** (Settings → Roles) | `createTools()` filters by `ctx.state.userAbility` |
+| External MCP client | **Admin API token** | Strapi checks each tool's `auth.policies` |
 
-Two axes decide a tier, not one: mutation (`read` vs. `write`/`destructive`)
-and cost/external-side-effect (`maintenance`, orthogonal to mutation). A tool
-can be read-only and still belong in `maintenance` — `searchYtKnowledge` is
-the example — because the risk that matters isn't "does it write a row," it's
-"can a token holder loop this and run up a bill or hammer a third party."
+Both of Strapi's admin auth strategies put a CASL ability on
+`ctx.state.userAbility` — the session strategy from the user's role, the
+`admin-token` strategy from the token's permission list — so one check
+covers both. See
+[`docs/architecture.md`](./architecture.md#the-permission-model).
 
-### Tier derivation (`server/src/mcp/access.ts`)
+### `access` is now metadata only
 
 ```ts
 export function tierFor(def: Tierable): AccessTier {
@@ -206,31 +244,20 @@ export function tierFor(def: Tierable): AccessTier {
 }
 ```
 
-An explicit `access` always wins. Otherwise `publicSafe` (already meaning
-"read-only, safe for anonymous chat") implies `read`; everything else — the
-safe default for third-party tools that set neither field — defaults to
-`write`. `maintenance` is never part of this derivation — a tool lands there
-only via an explicit `access: 'maintenance'`. `sendEmail`, `fetchTranscript`,
-and `searchYtKnowledge` all need an explicit tier: `sendEmail` because it's
-irreversible/external-side-effect; `fetchTranscript` because `publicSafe:
-true` would otherwise default it to `read` even though it writes a document
-and hits YouTube/OpenAI; `searchYtKnowledge` because `publicSafe: true` would
-otherwise default it to `read`, which is technically accurate (it mutates
-nothing) but hides that every call costs money via an OpenAI `embed()` call.
+`tierFor()` still exists and `access` is still worth declaring, but neither
+grants anything any more. They are **risk metadata** — useful for sorting a
+long grid and for deciding what to tick, not a permission boundary.
 
-Because permission gating filters `tools/list` itself (not just tool
-execution), a token granted only `mcp.read` cannot see or invoke the write,
-destructive, or maintenance tools. This still depends on every tool author
-setting `access`/`publicSafe` correctly — `publicSafe` describes "safe to
-expose to anonymous public chat," not "does not write" and not "cheap to
-run," so a `publicSafe` tool that mutates data or costs money per call (like
-`fetchTranscript` or `searchYtKnowledge`) must still declare the correct
-`access` explicitly. `mcp.read` is a permission boundary enforced by the tier
-a tool declares, not an automatic guarantee that every `read`-tiered tool is
-side-effect-free or free to run — treat it as a genuinely browse-only,
-low-cost surface for the built-ins, which are audited, and verify
-third-party/plugin tools individually before trusting the same claim for
-them.
+This makes the old footgun much less sharp. Under tiers, a mis-declared
+`access` silently widened what a `read`-granted token could reach. Now each
+tool is ticked individually, so a wrong `access` value misleads a human
+reading the list but cannot itself grant access to anything.
+
+Declaring it accurately still matters for the reader: `publicSafe` means
+"safe to expose to anonymous public chat" — not "does not write" and not
+"cheap to run." Tools like `fetchTranscript` (writes a document, hits
+YouTube) and `searchYtKnowledge` (costs money per call via OpenAI `embed()`)
+should still declare `access` explicitly so the risk is visible at a glance.
 
 ### Registering the actions
 
@@ -238,12 +265,19 @@ them.
 `registerAiSdkMcpTools()`, via
 `strapi.service('admin::permission').actionProvider.registerMany(...)`. It is
 idempotent — safe to run every boot — and must complete before tools are
-registered, since each tool's `auth.policies` references one of these action
-ids.
+registered, since each tool's `auth.policies` references one of these ids.
 
-To grant an admin API token access, in **Settings → Administration Panel →
-API Tokens**, create/edit a token, and under **Ai-sdk**, enable the actions
-for the tiers that token should reach.
+To scope an **external MCP client**: Settings → Administration Panel → API
+Tokens, create/edit an admin token, and tick the individual tools it should
+reach under each plugin's section.
+
+To scope an **admin's in-Strapi chat**: Settings → Administration Panel →
+Roles, edit the role, and tick tools there instead.
+
+> Note that actions are pruned when they stop being registered. Removing a
+> tool — or the plugin that contributed it — removes its action, and Strapi
+> drops any grants that referenced it. A brand-new tool likewise starts
+> **ungranted** and is invisible to every role and token until ticked.
 
 ---
 

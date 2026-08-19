@@ -1,7 +1,7 @@
 import type { Core } from '@strapi/strapi';
 import type { ToolRegistry } from '../lib/tool-registry';
 import { generateToolGuide } from './resources/tool-guide';
-import { MCP_ACTIONS } from './access';
+import { TOOL_GUIDE_ACTION } from './permissions';
 
 export const TOOL_GUIDE_URI = 'strapi://ai-sdk/tools/guide';
 
@@ -21,7 +21,7 @@ export function registerResourcesOnMcp(strapi: Core.Strapi, registry: ToolRegist
         'Complete guide to all available Strapi AI SDK tools, with parameters and usage examples.',
       mimeType: 'text/markdown',
     },
-    auth: { policies: [{ action: MCP_ACTIONS.read }] },
+    auth: { policies: [{ action: TOOL_GUIDE_ACTION }] },
     createHandler: () => async (uri: URL) => ({
       contents: [
         {

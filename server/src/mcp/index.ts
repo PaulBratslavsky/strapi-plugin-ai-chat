@@ -32,7 +32,7 @@ export async function registerAiSdkMcpTools(
       return;
     }
 
-    await registerMcpAdminPermissions(strapi);
+    await registerMcpAdminPermissions(strapi, registry);
     const count = registerToolsOnMcp(strapi, registry);
     registerResourcesOnMcp(strapi, registry);
 

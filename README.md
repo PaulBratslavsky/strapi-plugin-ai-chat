@@ -26,7 +26,7 @@ export default ({ env }) => ({
     resolve: 'src/plugins/ai-sdk', // or the npm package path
     config: {
       anthropicApiKey: env('ANTHROPIC_API_KEY'),
-      chatModel: env('ANTHROPIC_MODEL', 'claude-sonnet-4-20250514'),
+      chatModel: env('ANTHROPIC_MODEL', 'claude-sonnet-5'),
     },
   },
 });
@@ -36,7 +36,7 @@ export default ({ env }) => ({
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-your-api-key-here
-ANTHROPIC_MODEL=claude-sonnet-4-20250514  # optional
+ANTHROPIC_MODEL=claude-sonnet-5  # optional
 ```
 
 ### 3. Build and start
@@ -149,7 +149,7 @@ export default ({ env }) => ({
       apiKey: env('AI_API_KEY'),                    // provider-neutral (preferred)
       // anthropicApiKey: env('ANTHROPIC_API_KEY'),  // deprecated alias, still works as a fallback
       provider: 'anthropic',                        // default; or 'openai-compatible' for local models
-      chatModel: 'claude-sonnet-4-20250514',        // default
+      chatModel: 'claude-sonnet-5',        // default
       baseURL: undefined,                           // required for provider: 'openai-compatible'
 
       // System Prompt (optional)
@@ -178,13 +178,23 @@ There is no MCP configuration here — MCP is enabled at the **Strapi** level
 (`mcp: { enabled: true }` in the host's `config/server.ts`), not under this
 plugin's config. See [MCP Server](#mcp-server) below.
 
-### Supported Claude Models
+### Anthropic models
 
-- `claude-sonnet-4-20250514` (default)
-- `claude-opus-4-20250514`
-- `claude-haiku-4-5-20251001`
-- `claude-3-5-sonnet-20241022`
-- `claude-3-5-haiku-20241022`
+Verified against the Anthropic API on 2026-08-18:
+
+- `claude-sonnet-5` (default)
+- `claude-opus-5`
+- `claude-fable-5`
+- `claude-haiku-4-5-20251001` (public chat default — cheaper, higher rate limits)
+
+This is a reference list, not an allowlist. `chatModel` accepts any string, so
+newer Anthropic ids work without a plugin update — as do local model ids such as
+`gemma4:26b` when using the `openai-compatible` provider.
+
+**Prefer undated aliases** (`claude-sonnet-5`) over dated snapshots
+(`claude-sonnet-4-20250514`). Anthropic retires dated snapshots, and every dated
+id this plugin previously shipped had been retired — which silently broke chat
+for anyone running the defaults.
 
 ### Bring your own model (local / self-hosted)
 
@@ -370,12 +380,13 @@ configs.
   snake_case (`searchContent` -> `search_content`,
   `ai-sdk-yt-transcripts__fetchTranscript` ->
   `ai_sdk_yt_transcripts__fetch_transcript`).
-- Each tool is gated by an admin permission action — `plugin::ai-sdk.mcp.read`,
-  `.write`, `.destructive`, or `.maintenance` — derived from the tool's
-  `access` field (or `publicSafe` when `access` is unset; `maintenance` is
-  never derived, only set explicitly). A token only sees tools its role's
-  permissions cover; permission gating filters `tools/list` itself, not just
-  execution.
+- Each tool is gated by **its own** admin permission action —
+  `plugin::<owning-plugin>.tool.<slug>`, e.g.
+  `plugin::ai-sdk.tool.search-content` or
+  `plugin::ai-sdk-yt-transcripts.tool.fetch-transcript`. A caller only sees
+  tools it has been granted; permission gating filters `tools/list` itself,
+  not just execution. Tools contributed by another plugin register their
+  actions under **that plugin's** section, not ai-sdk's.
 - Schemas are handed to the SDK as plain Zod 4 objects — no custom
   Zod-to-JSON-Schema converter. A handful of this plugin's own array/object
   parameters are wrapped in `jsonCoercible()` so stringified JSON arguments
@@ -395,7 +406,7 @@ configs.
   for what replaced it and why it's a partial mitigation, not a full one.
 
 For the full contract — the `ai-tools` service shape, `ToolDefinition`,
-namespacing, Zod rules, and the four permission tiers — see
+namespacing, Zod rules, and per-tool permissions — see
 [`docs/plugin-contract.md`](./docs/plugin-contract.md).
 
 ### Setup
@@ -419,18 +430,20 @@ MCP authenticates with **Admin API tokens**, not Content API tokens:
 
 1. Go to **Settings → Administration Panel → API Tokens**
 2. Create a new token (or edit an existing one)
-3. Under **Permissions**, find the **Ai-sdk** section and enable the tiers
-   this token should reach: `mcp.read`, `mcp.write`, `mcp.destructive`,
-   `mcp.maintenance`
+3. Under **Permissions**, tick the individual tools this token should reach.
+   Each plugin contributing tools gets its own section — built-ins under
+   **Ai sdk**, contributed tools under their own plugin's name.
 4. Copy the token
 
-A read-only token (only `mcp.read` granted) gets a genuinely browse-only
-surface — write, destructive, and maintenance tools don't appear in
-`tools/list` at all for that token, not just refuse execution. `maintenance`
-covers tools that cost money or hit an external API per call (e.g. the
-YouTube extension plugins' `fetchTranscript` and `searchYtKnowledge`) even
-when they don't mutate anything — grant it separately from `mcp.read` if a
-token should browse but not spend.
+Scoping is per tool, so a token granted only `search-content` and
+`list-content-types` gets a genuinely browse-only surface — every other tool
+is absent from `tools/list` for that token, not merely refused on execution.
+
+Tick deliberately: some tools cost money or hit an external API per call
+(the YouTube plugins' `fetch-transcript` and `search-yt-knowledge`) even
+though they mutate nothing. Each tool's `access` metadata (`read` / `write`
+/ `destructive`) is a hint about that risk, but it no longer grants anything
+— what a token can do is exactly what you tick.
 
 #### 3. Connect your AI client
 
@@ -530,9 +543,10 @@ backward-compatible shim — this was a hard cutover, not a gradual migration.
    API token that worked against `/api/ai-sdk/mcp` will not authenticate
    against `/mcp` at all. You need an **Admin API token** (Settings →
    Administration Panel → API Tokens), and that token's role must be granted
-   the new `plugin::ai-sdk.mcp.read` / `.write` / `.destructive` /
-   `.maintenance` permissions — there is no "Ai-sdk: handle" permission to
-   carry forward; it's gone along with the old controller.
+   the individual `plugin::<owner>.tool.<slug>` permissions for the tools it
+   should reach — there is no "Ai-sdk: handle" permission to carry forward;
+   it's gone along with the old controller. (Interim releases briefly used
+   four `plugin::ai-sdk.mcp.*` tier actions; those are gone too.)
 
    Before:
    ```json
@@ -590,11 +604,12 @@ backward-compatible shim — this was a hard cutover, not a gradual migration.
    `v1.1.0`, `/mcp` is served by Strapi core — this plugin has no route or
    controller there, so there is nothing to attach a middleware to. **This
    protection is genuinely gone, with no config flag to restore it.** The
-   admin-token authentication and
-   `plugin::ai-sdk.mcp.read`/`.write`/`.destructive`/`.maintenance`
-   permission tiers are real mitigations, but they gate *who can call which
+   admin-token authentication and per-tool `plugin::<owner>.tool.<slug>`
+   permissions are real mitigations, but they gate *who can call which
    tools*, not *what a call's arguments contain* — they are not a substitute
-   for content screening. See
+   for content screening. A central middleware layer does exist for anyone
+   who needs this — `strapi.server.use()` mounts a global Koa middleware
+   upstream of `/mcp` — but this plugin does not ship one. See
    [`docs/guardrails.md`](./docs/guardrails.md#mcp-tool-calls-are-not-guardrail-screened)
    for the full explanation.
 
@@ -959,7 +974,7 @@ export default {
 };
 ```
 
-The tool is automatically available in AI chat and, on the next Strapi restart, MCP (unless `internal: true`) — gated by `plugin::ai-sdk.mcp.read`/`.write`/`.destructive`/`.maintenance` per its `access`/`publicSafe`. No changes to `tools/index.ts` or `mcp/register-tools.ts` needed.
+The tool is automatically available in AI chat and, on the next Strapi restart, MCP (unless `internal: true`) — gated by its own `plugin::<owner>.tool.<slug>` action, registered automatically under the owning plugin's section. No changes to `tools/index.ts` or `mcp/register-tools.ts` needed. The new action starts **ungranted**: tick it on a role (for chat) or a token (for MCP) before the tool becomes reachable.
 
 ### Adding an AI Provider
 
@@ -1032,6 +1047,12 @@ The plugin adds a chat interface to the Strapi admin panel with:
 - **Public Memory Store** -- shared facts available to public chat visitors (FAQ, policies, etc.)
 - **Tool Call Display** -- collapsible viewer showing tool inputs and outputs inline in the chat
 - **Widget Preview** -- live preview of the embeddable chat widget with copy-paste embed code
+- **Model Badge** -- the chat header shows the active model and whether inference is
+  **Local** or **Hosted**, so it is obvious at a glance whether content is leaving your
+  infrastructure. Backed by `GET /ai-sdk/model-info`, which reads `provider`, `chatModel`
+  and `baseURL` from plugin config. "Local" is derived from the **baseURL host** (loopback
+  or private range), not the provider name — `openai-compatible` also covers hosted
+  OpenAI-compatible APIs, and a privacy claim should not be inferred from a label.
 
 ## Error Handling
 
@@ -1125,10 +1146,38 @@ The plugin uses end-to-end integration tests against a running Strapi instance:
 npm run test:guardrails    # Guardrail safety tests (42 assertions)
 npm run test:api           # /ask and /ask-stream endpoint tests
 npm run test:stream        # Streaming visual test
-npm run test:chat          # Chat protocol test
+npm run test:chat          # Admin chat protocol test (/api/ai-sdk/chat)
+npm run test:public-chat   # Public/widget chat (/api/ai-sdk/public-chat)
+npm run test:unit          # Vitest unit tests (no Strapi needed)
 npm run test:ts:back       # Server TypeScript type checking (no Strapi needed)
 npm run test:ts:front      # Admin TypeScript type checking (no Strapi needed)
 ```
+
+### Prerequisite: grant the Public role
+
+The HTTP suites call content-API routes, so they return **403 until the Public role is
+granted** the plugin's actions. This is easy to miss and silently makes the whole suite
+unrunnable:
+
+```
+plugin::ai-sdk.controller.ask
+plugin::ai-sdk.controller.askStream
+plugin::ai-sdk.controller.chat
+plugin::ai-sdk.controller.publicChat
+plugin::ai-sdk.controller.serveWidget
+```
+
+Grant them in **Settings → Users & Permissions → Roles → Public**, or from your app's
+`bootstrap()`.
+
+### Why `test:public-chat` exists
+
+`test:chat` covers the admin endpoint only. `/public-chat` — the surface the embeddable
+widget uses — had no coverage, which let a real bug ship: `publicChat.chatModel` was
+hardcoded to an Anthropic model id regardless of the configured provider, so pointing the
+plugin at Ollama broke the widget with `model '...' not found` while admin chat kept
+working. The suite asserts model resolution explicitly, and was verified to fail when that
+bug is reintroduced.
 
 With authentication:
 
@@ -1145,14 +1194,19 @@ E2E_LIVE=1 npm run test:e2e:live   # Live pipeline — real YouTube/OpenAI/Neon 
 
 Both require a Strapi host >= 5.47 with `mcp: { enabled: true }`, all three
 plugins linked, and `STRAPI_URL` / `STRAPI_ADMIN_TOKEN` (an admin token
-granting all three `plugin::ai-sdk.mcp.*` permissions) set. **Neither suite
-has been run as of the `v1.1.0` migration** — see
+granting the `plugin::ai-sdk.mcp.*` permissions) set.
+
+**Status:** `test:e2e` (structural) has been run green — 12/12, including tool exposure,
+permission scoping and `.describe()` preservation. `test:e2e:live` remains **unverified**:
+it depends on YouTube transcript ingestion. That path was broken by a 400 from
+`youtubei/v1/player` on `youtubei.js` 16.x and was fixed by upgrading to 17.x;
+transcripts now fetch with or without a proxy. See
 [`docs/plugin-contract.md`](./docs/plugin-contract.md#9-e2e-suites--unverified-prerequisites)
 for the full prerequisite list before relying on them.
 
 ## Documentation
 
-- [Plugin Contract](./docs/plugin-contract.md) -- the `ai-tools` service contract, `ToolDefinition`, namespacing, Zod rules, and MCP permission tiers (source of truth as of v1.1.0)
+- [Plugin Contract](./docs/plugin-contract.md) -- the `ai-tools` service contract, `ToolDefinition`, namespacing, Zod rules, and per-tool permissions (source of truth)
 - [Architecture](./docs/architecture.md) -- full system architecture, data flows, extension guides
 - [Plugin Tool Discovery](./docs/plugin-tool-discovery.md) -- cross-plugin tool discovery architecture and implementation
 - [Tool Standardization Spec](./docs/tool-standardization-spec.md) -- canonical tool format, Zod-first vs MCP-native comparison, portability

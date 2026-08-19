@@ -51,10 +51,10 @@ describe('registerToolsOnMcp', () => {
 
     const byName = Object.fromEntries(captured.tools.map((t) => [t.name, t]));
     expect(byName.search_content.auth).toEqual({
-      policies: [{ action: 'plugin::ai-sdk.mcp.read' }],
+      policies: [{ action: 'plugin::ai-sdk.tool.search-content' }],
     });
     expect(byName.create_content.auth).toEqual({
-      policies: [{ action: 'plugin::ai-sdk.mcp.write' }],
+      policies: [{ action: 'plugin::ai-sdk.tool.create-content' }],
     });
   });
 

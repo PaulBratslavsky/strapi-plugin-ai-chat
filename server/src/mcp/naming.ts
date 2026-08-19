@@ -29,3 +29,36 @@ export function toTitle(name: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
   return `${prefix}: ${shortName}`;
 }
+
+/**
+ * MCP name with the source-namespace prefix (`<source>__`) stripped, e.g.
+ * "ai_sdk_yt_transcripts__fetch_transcript" -> "fetch_transcript". Used for
+ * the admin action uid: the plugin section (derived separately from
+ * `getToolSource`) already disambiguates the source, so repeating it in the
+ * uid tail would be redundant.
+ */
+export function toBareMcpName(name: string): string {
+  return toSnakeCase(name).replace(/^[a-z_]+__/, '');
+}
+
+/**
+ * Short, sentence-case display name for the admin permissions grid, e.g.
+ * "Search content" or "Fetch transcript". Strips the source-namespace
+ * prefix since the grid already clusters tools by plugin section —
+ * repeating the source in every checkbox label would be redundant.
+ */
+export function toDisplayName(name: string): string {
+  const shortName = toBareMcpName(name).replace(/_/g, ' ');
+  return shortName.charAt(0).toUpperCase() + shortName.slice(1);
+}
+
+/**
+ * Slug for the admin permission action uid, e.g. "search-content" or
+ * "fetch-transcript". Strapi's admin action uid validator only accepts
+ * lowercase letters, dots, and hyphens (`/^[a-z]([a-z|.|-]+)[a-z]$/`) — no
+ * underscores — so this is `toBareMcpName` with underscores swapped for
+ * hyphens, distinct from the MCP tool name itself (which stays snake_case).
+ */
+export function toActionSlug(name: string): string {
+  return toBareMcpName(name).replace(/_/g, '-');
+}

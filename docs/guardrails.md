@@ -100,22 +100,48 @@ control** — access control, not content screening:
 - **Admin API token authentication.** `/mcp` requires a valid Strapi Admin
   API token (not a Content API token, and not anonymous access). An
   unauthenticated request cannot reach any tool at all.
-- **The four `plugin::ai-sdk.mcp.*` permission tiers** (`read`, `write`,
-  `destructive`, `maintenance` — see [`docs/plugin-contract.md`](./plugin-contract.md#4-mcp-permission-tiers)).
-  These gate **which tools a given token's role can call at all** — a
-  read-only token cannot reach `createContent`, `updateContent`,
-  `uploadMedia`, or `sendEmail` regardless of what its arguments say.
+- **Per-tool permission actions.** One action per tool,
+  `plugin::<owning-plugin>.tool.<slug>` (e.g.
+  `plugin::ai-sdk.tool.search-content`). These gate **which tools a given
+  token can call at all**, and an ungranted tool is not merely un-callable —
+  it never appears in that token's `tools/list` at all. A token granted only
+  read tools cannot reach `createContent`, `updateContent`, `uploadMedia`, or
+  `sendEmail` regardless of what its arguments say. See
+  [`docs/architecture.md`](./architecture.md#the-permission-model).
 
 **Do not treat these as equivalent to prompt-injection screening.** They
 answer "is this caller allowed to invoke this tool," not "does this
-specific call's content look like an attack." A token holding `mcp.write`
-can still call `createContent` with attacker-supplied, unscreened
-arguments — permission tiers don't inspect argument content the way the
-guardrail regex patterns do. If your threat model requires content
-screening on MCP tool calls, it currently has to be implemented inside the
-tool's own `execute()` function (or the shared `tool-logic/` layer, since
-that's called by both the AI SDK chat path and the MCP bridge) — there is
-no middleware layer left to put it in centrally.
+specific call's content look like an attack." A token granted
+`plugin::ai-sdk.tool.create-content` can still call it with
+attacker-supplied, unscreened arguments — permissions don't inspect argument
+content the way the guardrail regex patterns do.
+
+### If you need content screening on MCP
+
+Two places can host it today:
+
+1. **Inside the tool** — its `execute()`, or better the shared `tool-logic/`
+   layer, which is called by both the chat path and the MCP bridge. Narrow
+   and explicit, but it must be repeated per tool.
+2. **A global Koa middleware** via `strapi.server.use()`. This is public,
+   typed API — `use(...args: Parameters<Koa['use']>): Server` on the `Server`
+   interface in `@strapi/types` — and it mounts *upstream* of `/mcp`, so it
+   can inspect and reject request bodies that Strapi's MCP service would
+   otherwise hand straight to a tool handler.
+
+Option 2 is **inbound-only**: it sees the JSON-RPC request body, so it can
+screen `tools/call` arguments, but it cannot screen tool *results* on the way
+out without buffering the response. It is also global rather than route-scoped,
+so it must filter by path itself and be careful not to disturb other traffic.
+
+> An earlier revision of this document claimed there was "no middleware layer
+> left to put it in centrally." That was wrong — `strapi.server.use()` is
+> exactly such a layer. What is genuinely absent is a *route-scoped* hook on
+> `/mcp` owned by this plugin.
+
+[`strapi-mcp-guard`](https://github.com/PaulBratslavsky/strapi-mcp-guard) is a
+reference implementation of this approach, kept as prior art while Strapi
+works toward official support. Nothing in this plugin implements it yet.
 
 ---
 

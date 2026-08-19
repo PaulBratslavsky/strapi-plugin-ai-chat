@@ -2,7 +2,7 @@ import type { Core } from '@strapi/strapi';
 import { z } from 'zod';
 import type { ToolRegistry } from '../lib/tool-registry';
 import { toSnakeCase, toTitle } from './naming';
-import { actionFor } from './access';
+import { actionForTool } from './permissions';
 import { guardSize } from './size-guard';
 
 /**
@@ -41,7 +41,7 @@ export function registerToolsOnMcp(strapi: Core.Strapi, registry: ToolRegistry):
         description: def.description,
         resolveInputSchema: () => def.schema as any,
         resolveOutputSchema: () => LOOSE_OUTPUT as any,
-        auth: { policies: [{ action: actionFor(def) }] },
+        auth: { policies: [{ action: actionForTool(name) }] },
         createHandler: (s: Core.Strapi) => async ({ args }: { args?: unknown }) => {
           try {
             const raw = await def.execute(args ?? {}, s);

@@ -21,7 +21,8 @@ describe('registerAiSdkMcpTools', () => {
     const { strapi, captured } = createFakeStrapi();
     await registerAiSdkMcpTools(strapi, buildRegistry());
 
-    expect(captured.actions).toHaveLength(4);
+    // One action per public tool (searchContent) plus the tool-guide action.
+    expect(captured.actions).toHaveLength(2);
     expect(captured.tools).toHaveLength(1);
     expect(captured.resources).toHaveLength(1);
   });

@@ -1,10 +1,14 @@
 /**
- * MCP permission tiers.
+ * MCP tool risk tiers — metadata only.
  *
- * The official Strapi MCP server gates every custom tool behind an admin
- * permission action. A tool's tier decides which action guards it, and
- * because permission gating also filters `tools/list`, a read-scoped token
- * yields a genuinely browse-only surface.
+ * Permission gating no longer runs through these tiers: every MCP-exposed
+ * tool is now gated by its own admin action (`plugin::ai-sdk.tool.<name>`,
+ * see `./permissions.ts` and `actionForTool` in there), so an admin token
+ * can be scoped to exactly the tools it needs.
+ *
+ * `access` / `tierFor` stay useful as metadata — for docs, and as a future
+ * default when suggesting which tools a new role should grant — but they no
+ * longer decide which admin action a tool is gated behind.
  *
  * Tiering runs on two independent axes:
  *  - Mutation: does the tool write/delete data (`write`) or is it purely
@@ -23,13 +27,6 @@
  */
 export type AccessTier = 'read' | 'write' | 'destructive' | 'maintenance';
 
-export const MCP_ACTIONS: Record<AccessTier, string> = {
-  read: 'plugin::ai-sdk.mcp.read',
-  write: 'plugin::ai-sdk.mcp.write',
-  destructive: 'plugin::ai-sdk.mcp.destructive',
-  maintenance: 'plugin::ai-sdk.mcp.maintenance',
-};
-
 /** The subset of ToolDefinition that tiering depends on. */
 export interface Tierable {
   access?: AccessTier;
@@ -42,11 +39,10 @@ export interface Tierable {
  * chat") implies read, and everything else defaults to write — the safe
  * default for third-party tools that declare neither. `maintenance` is
  * only ever set explicitly and is never part of this derivation.
+ *
+ * This tier is metadata only — it does not gate MCP access (see the module
+ * doc comment above).
  */
 export function tierFor(def: Tierable): AccessTier {
   return def.access ?? (def.publicSafe ? 'read' : 'write');
-}
-
-export function actionFor(def: Tierable): string {
-  return MCP_ACTIONS[tierFor(def)];
 }

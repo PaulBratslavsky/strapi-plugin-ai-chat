@@ -3,6 +3,7 @@ import { builtInTools } from '../../server/src/tools/definitions';
 import { ToolRegistry } from '../../server/src/lib/tool-registry';
 import { tierFor } from '../../server/src/mcp/access';
 import { toSnakeCase } from '../../server/src/mcp/naming';
+import { buildMcpActionDefs } from '../../server/src/mcp/permissions';
 
 /**
  * Table-driven inventory test over the REAL `builtInTools` array (not
@@ -108,6 +109,36 @@ describe('builtInTools inventory', () => {
     }
     for (const row of EXPECTED_INVENTORY.filter((r) => !r.internal)) {
       expect(publicNames.has(row.name)).toBe(true);
+    }
+  });
+
+  it('registers exactly one admin action per public built-in tool, plus the tool-guide action', () => {
+    // Pinned count: 8 public built-ins (14 total minus 6 internal) + 1 guide
+    // action = 9. This is the regression test for the "Registered N custom
+    // admin permission(s)" boot log with no contributed plugins enabled.
+    const registry = new ToolRegistry();
+    for (const def of builtInTools) registry.register(def);
+
+    const defs = buildMcpActionDefs(registry);
+    expect(defs).toHaveLength(9);
+
+    // Admin action uids can't contain underscores (Strapi's action-provider
+    // uid validator only allows lowercase letters, dots, and hyphens), so
+    // the uid tail is the MCP name with underscores swapped for hyphens.
+    const expectedPublicUids = EXPECTED_INVENTORY.filter((row) => !row.internal)
+      .map((row) => `tool.${row.mcpName.replace(/_/g, '-')}`)
+      .concat('tool.guide')
+      .sort();
+    expect(defs.map((d) => d.uid).sort()).toEqual(expectedPublicUids);
+
+    // Every generated action lands under the ai-sdk plugin section (all of
+    // these are built-in — no `__` namespace prefix — so pluginName is
+    // always 'ai-sdk'), and every uid is free of underscores.
+    for (const def of defs) {
+      expect(`plugin::${def.pluginName}.${def.uid}`).toMatch(/^plugin::ai-sdk\.tool\./);
+      expect(def.pluginName).toBe('ai-sdk');
+      expect(def.subCategory).toBe('MCP tools');
+      expect(def.uid).not.toMatch(/_/);
     }
   });
 });

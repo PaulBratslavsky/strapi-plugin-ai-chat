@@ -3,7 +3,8 @@ import type { Context } from 'koa';
 import { Readable } from 'node:stream';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { PluginInstance } from '../lib/types';
+import type { PluginConfig, PluginInstance } from '../lib/types';
+import { DEFAULT_MODEL } from '../lib/types';
 import { getService, validateBody, validateChatBody, createSSEStream, writeSSE } from '../lib/utils';
 
 const PLUGIN_ID = 'ai-sdk';
@@ -69,6 +70,8 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
       system: body.system,
       adminUserId,
       enabledToolSources: body.enabledToolSources,
+      // RBAC: the model only sees tools this admin's role grants.
+      ability: ctx.state?.userAbility,
     });
 
     // Get the response using toUIMessageStreamResponse
@@ -108,6 +111,40 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
     ctx.set('x-vercel-ai-ui-message-stream', 'v1');
 
     ctx.body = Readable.fromWeb(response.body as import('node:stream/web').ReadableStream);
+  },
+
+  /**
+   * Report which model is serving chat and whether inference is local.
+   *
+   * "Local" is inferred from the baseURL host rather than the provider name,
+   * because `openai-compatible` covers both self-hosted runtimes (Ollama, vLLM,
+   * LM Studio) and hosted OpenAI-compatible APIs. Only a loopback/private host
+   * means the data genuinely is not leaving the machine — which is the whole
+   * point of the claim, so it should not be guessed from the provider label.
+   */
+  async getModelInfo(ctx: Context) {
+    const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
+    const provider = config?.provider ?? 'anthropic';
+    const model = config?.chatModel ?? DEFAULT_MODEL;
+    const baseURL = config?.baseURL;
+
+    let isLocal = false;
+    if (baseURL) {
+      try {
+        const host = new URL(baseURL).hostname;
+        isLocal =
+          host === 'localhost' ||
+          host === '127.0.0.1' ||
+          host === '::1' ||
+          host === 'host.docker.internal' ||
+          host.endsWith('.local') ||
+          /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+      } catch {
+        isLocal = false;
+      }
+    }
+
+    ctx.body = { data: { provider, model, baseURL: baseURL ?? null, isLocal } };
   },
 
   async getToolSources(ctx: Context) {

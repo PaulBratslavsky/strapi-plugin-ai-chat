@@ -17,7 +17,6 @@ export interface StreamTextRawResult {
 
 import {
   DEFAULT_MODEL,
-  DEFAULT_TEMPERATURE,
   isPromptInput,
   type PluginConfig,
   type GenerateInput,
@@ -142,10 +141,15 @@ export class AIProvider {
   }
 
   private buildParams(input: GenerateInput) {
+    // `temperature` is only sent when the caller explicitly asks for it.
+    // Newer Anthropic models (claude-sonnet-5 and later) reject the parameter
+    // outright with "`temperature` is deprecated for this model", so sending a
+    // hardcoded default broke chat on every current model. Omitting it lets each
+    // model apply its own default, which is also the better behaviour.
     const base = {
       model: this.getLanguageModel(input.modelId),
       system: input.system,
-      temperature: input.temperature ?? DEFAULT_TEMPERATURE,
+      ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
       maxOutputTokens: input.maxOutputTokens,
       tools: input.tools,
       stopWhen: input.stopWhen,
