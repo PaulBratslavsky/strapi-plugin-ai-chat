@@ -61,25 +61,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
   const plugin = strapi.plugin('ai-sdk') as unknown as PluginInstance;
 
   return {
-    async ask(prompt: string, options?: { system?: string }) {
-      if (!plugin.aiProvider) {
-        throw new Error('AI provider not initialized');
-      }
-      const result = await plugin.aiProvider.generateText(prompt, {
-        system: options?.system,
-      });
-      return result.text;
-    },
 
-    async askStream(prompt: string, options?: { system?: string }) {
-      if (!plugin.aiProvider) {
-        throw new Error('AI provider not initialized');
-      }
-      const result = await plugin.aiProvider.streamText(prompt, {
-        system: options?.system,
-      });
-      return result.textStream;
-    },
 
     /**
      * Chat with messages - returns raw stream for UI message stream response

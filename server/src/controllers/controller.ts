@@ -11,50 +11,6 @@ import { actionForTool } from '../lib/tool-permissions';
 const PLUGIN_ID = 'ai-sdk';
 
 const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
-  async ask(ctx: Context) {
-    const body = validateBody(ctx);
-    if (!body) return;
-
-    const service = getService(strapi, ctx);
-    if (!service) return;
-
-    const result = await service.ask(body.prompt, { system: body.system });
-    ctx.body = { data: { text: result } };
-  },
-
-  async askStream(ctx: Context) {
-    const body = validateBody(ctx);
-    if (!body) return;
-
-    const service = getService(strapi, ctx);
-    if (!service) return;
-
-    const textStream = await service.askStream(body.prompt, { system: body.system });
-    const stream = createSSEStream(ctx);
-
-    (async () => {
-      try {
-        for await (const chunk of textStream) {
-          writeSSE(stream, { text: chunk });
-        }
-        stream.write('data: [DONE]\n\n');
-      } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') {
-          strapi.log.debug('AI SDK stream aborted by client');
-        } else {
-          strapi.log.error('AI SDK stream error:', error);
-        }
-        const errorMessage = error instanceof Error ? error.message : 'Stream error occurred';
-        writeSSE(stream, { error: errorMessage });
-      } finally {
-        stream.end();
-      }
-    })().catch((error) => {
-      strapi.log.error('Uncaught stream error:', error);
-      stream.end();
-    });
-  },
-
   /**
    * Chat endpoint using AI SDK UI message stream protocol
    * Compatible with useChat hook from @ai-sdk/react
