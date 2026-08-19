@@ -161,12 +161,55 @@ The hand parser handles three event types: `text-delta`,
 is dropped:
 
 - **`error`** — a stream-level failure produces no `text-delta`, so the UI shows
-  a bare "Something went wrong" with no cause. This is the most likely
-  explanation for the unexplained "network error" seen during development.
+  a bare fallback with no cause. See the worked example below.
 - **`tool-input-start` / `tool-input-delta`** — a slow tool call currently looks
   like a hang, since nothing renders until its input is complete.
 - **`reasoning`**, **`abort`** — dropped entirely; a cancelled stream is
   indistinguishable from a crash.
+
+### Worked example: a real failure this hid
+
+This is not hypothetical. It cost about twenty minutes of live debugging on
+2026-08-19.
+
+Production chat returned:
+
+> **Assistant:** No response received.
+
+That string is the hand-rolled hook's fallback when a stream completes without
+producing a single `text-delta`:
+
+```ts
+if (!result) {
+  updateMessage(setMessages, assistantId, (message) => ({
+    ...message,
+    content: message.content || 'No response received.',
+  }));
+}
+```
+
+The actual cause was `ANTHROPIC_MODEL` being set in the Strapi Cloud dashboard
+to `claude-sonnet-4-20250514`, a model that no longer exists. The Anthropic API
+answered precisely:
+
+```json
+{"type":"error","error":{"type":"not_found_error","message":"model: claude-sonnet-4-20250514"}}
+```
+
+The server knew. The AI SDK put it on the wire as an `error` part. The client
+dropped it, because `readSSEStream` only switches on three cases and `error` is
+not one of them. Diagnosis required reading the plugin config, spotting that an
+env var could override it, and then curling the Anthropic API by hand to confirm
+the model was dead.
+
+With the SDK's `useChat`, that `error` part surfaces through the hook's `error`
+state and the message renders in the UI. The same failure becomes
+self-diagnosing.
+
+Two things follow for the verification checklist: the misconfigured-model case
+is worth testing explicitly, not just a killed connection, and any fallback copy
+should never invent a reason — "No response received" reads like an empty answer
+when it was in fact a hard error.
 
 ### Consumers
 
@@ -186,6 +229,9 @@ Typechecking proves nothing here; this is all streaming behaviour.
 - [ ] Killing the server mid-stream shows a real error, not a silent stall.
       Confirm this fails before the change and passes after; it is the
       regression the swap is meant to fix
+- [ ] Point `chatModel` at a nonexistent model. The UI must show the provider's
+      `not_found_error`, not "No response received." This is the exact
+      production failure described above
 - [ ] Tool source toggles still filter the toolset
 - [ ] Switching conversations resets cleanly
 
