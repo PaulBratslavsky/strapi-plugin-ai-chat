@@ -83,13 +83,29 @@ export class AIProvider {
     const cfg = config as Partial<PluginConfig> | undefined;
 
     const apiKey = resolveApiKey(cfg, log);
-    if (!apiKey) {
+    const providerName = cfg?.provider ?? 'anthropic';
+
+    // Self-hosted runtimes have no auth to speak of. Ollama, vLLM and LM Studio
+    // accept any bearer token or none at all, so demanding a key here forced a
+    // dummy value into config for the one setup this plugin most wants to make
+    // easy. What actually matters for those is baseURL — without it there is no
+    // endpoint to call, and the failure would otherwise surface as a confusing
+    // request to the wrong host.
+    if (providerName === 'openai-compatible') {
+      if (!cfg?.baseURL) {
+        log?.warn(
+          '[ai-sdk] provider "openai-compatible" needs a baseURL, e.g. ' +
+            '"http://localhost:11434/v1" for Ollama. AI features are disabled.',
+        );
+        return false;
+      }
+    } else if (!apiKey) {
       return false;
     }
 
     this.apiKey = apiKey;
     this.baseURL = cfg?.baseURL;
-    this.providerName = cfg?.provider ?? 'anthropic';
+    this.providerName = providerName;
 
     if (cfg?.chatModel) {
       this.model = cfg.chatModel;
