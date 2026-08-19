@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Message } from './useChat';
+import { toRenderMessages } from '../utils/message-adapter';
 import {
   fetchConversations,
   fetchConversation,
@@ -23,7 +24,7 @@ export function useConversations() {
           const most_recent = list[0];
           const conversation = await fetchConversation(most_recent.documentId);
           setActiveId(most_recent.documentId);
-          setInitialMessages((conversation.messages as Message[]) || []);
+          setInitialMessages(toRenderMessages(conversation.messages));
         }
       })
       .catch((err) => console.error('Failed to load conversations:', err));
@@ -33,7 +34,7 @@ export function useConversations() {
     try {
       const conversation = await fetchConversation(documentId);
       setActiveId(documentId);
-      setInitialMessages((conversation.messages as Message[]) || []);
+      setInitialMessages(toRenderMessages(conversation.messages));
     } catch (err) {
       console.error('Failed to load conversation:', err);
     }
