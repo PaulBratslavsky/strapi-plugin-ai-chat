@@ -157,7 +157,7 @@ describe('ungranted-permission advisory', () => {
     captured.logs.filter((l: any) => l.level === 'warn').map((l: any) => l.message);
 
   it('warns when neither roles nor tokens grant any tool action', async () => {
-    const { strapi, captured } = createFakeStrapi({ grantCounts: [0, 0] });
+    const { strapi, captured } = createFakeStrapi({ grantCounts: 0 });
 
     await registerMcpAdminPermissions(strapi, registryOf(tools));
 
@@ -168,14 +168,14 @@ describe('ungranted-permission advisory', () => {
     expect(w[0]).toMatch(/plugin::ai-sdk\.mcp\.read/);
   });
 
-  it('stays quiet when a role grants at least one action', async () => {
-    const { strapi, captured } = createFakeStrapi({ grantCounts: [1, 0] });
+  it('stays quiet when at least one grant exists', async () => {
+    const { strapi, captured } = createFakeStrapi({ grantCounts: 1 });
     await registerMcpAdminPermissions(strapi, registryOf(tools));
     expect(warnings(captured)).toHaveLength(0);
   });
 
-  it('stays quiet when only a token grants an action', async () => {
-    const { strapi, captured } = createFakeStrapi({ grantCounts: [0, 3] });
+  it('stays quiet when several grants exist', async () => {
+    const { strapi, captured } = createFakeStrapi({ grantCounts: 3 });
     await registerMcpAdminPermissions(strapi, registryOf(tools));
     expect(warnings(captured)).toHaveLength(0);
   });

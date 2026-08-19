@@ -3,7 +3,7 @@ import type { ToolSet } from 'ai';
 import { tool, zodSchema } from 'ai';
 import type { PluginInstance } from '../lib/types';
 import type { ToolContext } from '../lib/tool-registry';
-import { actionForTool } from '../mcp/permissions';
+import { actionForTool } from '../lib/tool-permissions';
 
 export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet {
   const plugin = strapi.plugin('ai-sdk') as unknown as PluginInstance;

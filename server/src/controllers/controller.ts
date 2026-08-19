@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import type { PluginConfig, PluginInstance } from '../lib/types';
 import { DEFAULT_MODEL } from '../lib/types';
 import { getService, validateBody, validateChatBody, createSSEStream, writeSSE } from '../lib/utils';
+import { actionForTool } from '../lib/tool-permissions';
 
 const PLUGIN_ID = 'ai-sdk';
 
@@ -156,7 +157,16 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
       return;
     }
 
-    ctx.body = { data: registry.getToolSources() };
+    // Hide sources the caller cannot actually use. Without this the chat UI
+    // offers toggles for tools that createTools() will withhold, so turning
+    // one on appears to do nothing.
+    const ability = ctx.state?.userAbility;
+    const sources = registry.getToolSources().filter((source) => {
+      if (!ability) return true;
+      return source.tools.some((name) => ability.can(actionForTool(name)));
+    });
+
+    ctx.body = { data: sources };
   },
 
   async serveWidget(ctx: Context) {

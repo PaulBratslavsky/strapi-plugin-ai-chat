@@ -137,7 +137,7 @@ describe('builtInTools inventory', () => {
     for (const def of defs) {
       expect(`plugin::${def.pluginName}.${def.uid}`).toMatch(/^plugin::ai-sdk\.tool\./);
       expect(def.pluginName).toBe('ai-sdk');
-      expect(def.subCategory).toBe('MCP tools');
+      expect(def.subCategory).toBe('AI tools');
       expect(def.uid).not.toMatch(/_/);
     }
   });
