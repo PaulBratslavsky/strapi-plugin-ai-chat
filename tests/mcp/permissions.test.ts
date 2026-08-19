@@ -135,3 +135,60 @@ describe('buildMcpActionDefs', () => {
     expect(`plugin::${defs[0].pluginName}.${defs[0].uid}`).toBe(TOOL_GUIDE_ACTION);
   });
 });
+
+describe('ungranted-permission advisory', () => {
+  const tools = [
+    {
+      name: 'searchContent',
+      description: 'Search',
+      schema: z.object({}),
+      execute: async () => ({}),
+      publicSafe: true,
+    },
+  ];
+
+  function registryOf(defs: any[]): ToolRegistry {
+    const r = new ToolRegistry();
+    for (const d of defs) r.register(d);
+    return r;
+  }
+
+  const warnings = (captured: any) =>
+    captured.logs.filter((l: any) => l.level === 'warn').map((l: any) => l.message);
+
+  it('warns when neither roles nor tokens grant any tool action', async () => {
+    const { strapi, captured } = createFakeStrapi({ grantCounts: [0, 0] });
+
+    await registerMcpAdminPermissions(strapi, registryOf(tools));
+
+    const w = warnings(captured);
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatch(/EMPTY tools\/list/);
+    // must point at the pruned tier actions, since that is the upgrade case
+    expect(w[0]).toMatch(/plugin::ai-sdk\.mcp\.read/);
+  });
+
+  it('stays quiet when a role grants at least one action', async () => {
+    const { strapi, captured } = createFakeStrapi({ grantCounts: [1, 0] });
+    await registerMcpAdminPermissions(strapi, registryOf(tools));
+    expect(warnings(captured)).toHaveLength(0);
+  });
+
+  it('stays quiet when only a token grants an action', async () => {
+    const { strapi, captured } = createFakeStrapi({ grantCounts: [0, 3] });
+    await registerMcpAdminPermissions(strapi, registryOf(tools));
+    expect(warnings(captured)).toHaveLength(0);
+  });
+
+  it('never breaks registration when the query layer is unavailable', async () => {
+    const { strapi, captured } = createFakeStrapi({ grantCounts: null });
+
+    await expect(
+      registerMcpAdminPermissions(strapi, registryOf(tools)),
+    ).resolves.toBeUndefined();
+
+    // registration still logged; failure is downgraded to debug, not warn
+    expect(captured.actions.length).toBeGreaterThan(0);
+    expect(warnings(captured)).toHaveLength(0);
+  });
+});
