@@ -31,7 +31,18 @@ export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet
     // Withhold tools the caller has no permission for. Same per-tool actions
     // that gate /mcp, evaluated against whoever is calling: an admin user's
     // role grants for chat, an admin token's grants for MCP.
-    if (ability && !ability.can(actionForTool(name))) continue;
+    //
+    // Internal tools are exempt. They never reach MCP, so buildMcpActionDefs()
+    // - which walks getPublic() - never registers an action for them. Gating
+    // them here would withhold them from everyone including a Super Admin,
+    // because the action they would need does not exist to be granted. That
+    // silently disabled saveMemory, recallMemories, saveNote, recallNotes,
+    // recallPublicMemories, and manageTask on every authenticated request.
+    //
+    // Exempting rather than registering actions for them is deliberate: these
+    // are chat-internal bookkeeping scoped to the calling admin's own data,
+    // not capabilities worth scoping separately.
+    if (ability && !def.internal && !ability.can(actionForTool(name))) continue;
 
     tools[name] = tool({
       description: def.description,
