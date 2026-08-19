@@ -89,6 +89,50 @@ export function actionForTool(name: string): string {
   return `plugin::${pluginNameForTool(name)}.tool.${toActionSlug(name)}`;
 }
 
+/**
+ * Warn when nothing grants any of our tool actions.
+ *
+ * Registering actions and granting them are different things: Strapi filters
+ * `tools/list` per caller, so a token holding none of these actions gets a
+ * successful but *empty* tool list — no error, and the registration logs above
+ * still read as success. That is exactly the state an upgrade lands in, since
+ * Strapi prunes permission rows whose action id no longer exists (the pre-1.2.0
+ * `plugin::ai-sdk.mcp.*` tiers). Without this warning the only symptom is a
+ * client that mysteriously sees no tools.
+ *
+ * Advisory only — never throws, never blocks boot.
+ */
+async function warnIfNothingGranted(strapi: Core.Strapi, actionIds: string[]): Promise<void> {
+  if (actionIds.length === 0) return;
+
+  try {
+    const where = { action: { $in: actionIds } };
+    const [roleGrants, tokenGrants] = await Promise.all([
+      strapi.db.query('admin::permission').count({ where }),
+      strapi.db.query('admin::api-token-permission').count({ where }),
+    ]);
+
+    if (roleGrants === 0 && tokenGrants === 0) {
+      strapi.log.warn(
+        `[ai-sdk:mcp] ${actionIds.length} tool permission(s) registered, but no role or API ` +
+          `token grants any of them. MCP clients will authenticate successfully and receive an ` +
+          `EMPTY tools/list, and in-Strapi chat will have no tools. Grant them under each ` +
+          `plugin's section in Settings > Roles (for chat) or Settings > API Tokens (for MCP). ` +
+          `If you upgraded from a version using plugin::ai-sdk.mcp.read/.write/.destructive/` +
+          `.maintenance, those actions no longer exist and their grants were pruned — the tools ` +
+          `must be re-granted individually.`,
+      );
+    }
+  } catch (error) {
+    // A failed advisory check must never affect boot.
+    strapi.log.debug(
+      `[ai-sdk:mcp] Could not check whether tool permissions are granted: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 export async function registerMcpAdminPermissions(
   strapi: Core.Strapi,
   registry: ToolRegistry,
@@ -96,4 +140,9 @@ export async function registerMcpAdminPermissions(
   const defs = buildMcpActionDefs(registry);
   await strapi.service('admin::permission').actionProvider.registerMany(defs);
   strapi.log.info(`[ai-sdk:mcp] Registered ${defs.length} custom admin permission(s).`);
+
+  await warnIfNothingGranted(
+    strapi,
+    defs.map((d) => `plugin::${d.pluginName}.${d.uid}`),
+  );
 }

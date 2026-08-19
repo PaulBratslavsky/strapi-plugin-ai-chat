@@ -19,6 +19,13 @@ export interface FakeStrapiOptions {
    * otherwise invalid tool definition.
    */
   failToolNames?: string[];
+  /**
+   * Rows the fake `strapi.db` reports for our tool actions: [roleGrants,
+   * tokenGrants]. Defaults to [1, 1] so the "nothing is granted" advisory
+   * stays quiet unless a test asks for it. Set `null` to omit `db` entirely,
+   * simulating a Strapi whose query layer is unavailable.
+   */
+  grantCounts?: [number, number] | null;
 }
 
 /**
@@ -30,7 +37,12 @@ export function createFakeStrapi(options: FakeStrapiOptions = {}): {
   strapi: Core.Strapi;
   captured: Captured;
 } {
-  const { mcpEnabled = true, hasAiNamespace = true, failToolNames = [] } = options;
+  const {
+    mcpEnabled = true,
+    hasAiNamespace = true,
+    failToolNames = [],
+    grantCounts = [1, 1],
+  } = options;
 
   const captured: Captured = { tools: [], resources: [], actions: [], logs: [] };
 
@@ -79,6 +91,16 @@ export function createFakeStrapi(options: FakeStrapiOptions = {}): {
       return undefined;
     },
     ai,
+    ...(grantCounts === null
+      ? {}
+      : {
+          db: {
+            query: (uid: string) => ({
+              count: async () =>
+                uid === 'admin::permission' ? grantCounts[0] : grantCounts[1],
+            }),
+          },
+        }),
   } as unknown as Core.Strapi;
 
   return { strapi, captured };
