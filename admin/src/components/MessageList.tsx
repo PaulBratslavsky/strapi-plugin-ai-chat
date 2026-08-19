@@ -6,6 +6,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Sparkle } from '@strapi/icons';
 import type { Message } from '../hooks/useChat';
+import { messageText, messageToolParts, toolPartName } from '../hooks/useChat';
 import { ToolCallDisplay, HIDDEN_TOOLS } from './ToolCallDisplay';
 
 // --- Styled Components ---
@@ -217,13 +218,21 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(
         )}
 
         {messages.map((message, index) => {
+          // Text and tool calls come out of the ordered `parts` array now.
+          // Several text parts around a tool call still collapse into one
+          // bubble here; the order is preserved in the data, so rendering them
+          // interleaved is a later change rather than a lost one.
+          const text = messageText(message);
+          const toolParts = messageToolParts(message).map((part) => ({
+            ...part,
+            toolName: toolPartName(part),
+          }));
+
           const displayContent =
-            message.role === 'assistant' && message.content
-              ? autoLinkContentTypeUids(message.content)
-              : message.content;
+            message.role === 'assistant' && text ? autoLinkContentTypeUids(text) : text;
 
           const isLastMessage = index === messages.length - 1;
-          const hasToolsRunning = message.toolCalls?.some((tc) => tc.output === undefined) ?? false;
+          const hasToolsRunning = toolParts.some((part) => part.output === undefined);
           const showThinking = isLoading && isLastMessage && message.role === 'assistant' && displayContent && hasToolsRunning;
 
           return (
@@ -235,7 +244,7 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(
                 <MessageRole $isUser={message.role === 'user'}>
                   {message.role === 'user' ? 'You' : 'Assistant'}
                 </MessageRole>
-                {message.role === 'user' && message.content}
+                {message.role === 'user' && text}
                 {message.role === 'assistant' && displayContent && (
                   <MarkdownBody $isUser={false}>
                     <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{displayContent}</Markdown>
@@ -244,10 +253,10 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(
                 {message.role === 'assistant' && !displayContent && isLoading && (
                   <TypingDots><span /><span /><span /></TypingDots>
                 )}
-                {message.toolCalls
-                  ?.filter((tc) => !HIDDEN_TOOLS.has(tc.toolName))
-                  .map((tc) => (
-                    <ToolCallDisplay key={tc.toolCallId} toolCall={tc} />
+                {toolParts
+                  .filter((part) => !HIDDEN_TOOLS.has(part.toolName))
+                  .map((part) => (
+                    <ToolCallDisplay key={part.toolCallId} toolCall={part} />
                   ))}
                 {showThinking && (
                   <ThinkingIndicator>

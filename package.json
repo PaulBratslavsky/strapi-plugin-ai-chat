@@ -49,6 +49,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.15",
     "@ai-sdk/openai-compatible": "^2.0.69",
+    "@ai-sdk/react": "^3.0.41",
     "@strapi/design-system": "^2.0.0-rc.30",
     "@strapi/icons": "^2.0.0-rc.30",
     "ai": "^6.0.39",
