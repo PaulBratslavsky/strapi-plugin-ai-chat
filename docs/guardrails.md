@@ -37,11 +37,13 @@ The plugin has these HTTP entry points for user input:
 |---|---|---|
 | Admin chat | `POST /ai-sdk/chat` | Strapi admin panel |
 | Content API | `POST /api/ai-sdk/ask`, `/ask-stream`, `/chat` | Frontend apps |
-| Public widget | `POST /api/ai-sdk/public-chat` | Embeddable, unauthenticated chat widget |
+| Public widget | `POST /api/ai-sdk-public-chat/chat` | Embeddable, unauthenticated chat widget — **served by `strapi-plugin-ai-sdk-public-chat`**, which borrows this middleware by name |
 
-`POST /api/ai-sdk/public-chat` is screened using the same extraction logic
+`POST /api/ai-sdk-public-chat/chat` is screened using the same extraction logic
 as `/chat` (both consume `{ messages: UIMessage[] }`), but is labelled with
-its own `route: 'public-chat'` so logging/telemetry can distinguish the
+its own `route: 'public-chat'` — matched on the `/ai-sdk-public-chat/` path
+segment rather than a `/public-chat` suffix, since the route is no longer
+literally named that — so logging/telemetry can distinguish the
 public surface from the authenticated admin/frontend one.
 
 Without guardrails, a malicious or careless prompt could manipulate the AI into misusing tools -- for example, deleting all content or leaking system prompt details.
@@ -152,7 +154,7 @@ graph TB
     subgraph Entry["HTTP Entry Points"]
         Admin["Admin Chat<br/>POST /ai-sdk/chat"]
         API["Content API<br/>POST /api/ai-sdk/ask<br/>POST /api/ai-sdk/ask-stream<br/>POST /api/ai-sdk/chat"]
-        Public["Public Widget<br/>POST /api/ai-sdk/public-chat"]
+        Public["Public Widget<br/>POST /api/ai-sdk-public-chat/chat<br/>(separate plugin)"]
     end
 
     subgraph Middleware["Guardrail Middleware"]
@@ -188,7 +190,7 @@ graph TB
 
 ### Request Pipeline
 
-The guardrail runs as a **Strapi route middleware**. Its route config lists it on `/ask`, `/ask-stream`, `/chat`, and `/public-chat`, and the input-extraction step recognizes all four — `/public-chat` uses the same extraction logic as `/chat`, labelled `route: 'public-chat'`. It is not registered at all on `/mcp`, which this plugin does not own (see [MCP Tool Calls Are Not Guardrail-Screened](#mcp-tool-calls-are-not-guardrail-screened)). In Strapi v5, the execution order is:
+The guardrail runs as a **Strapi route middleware**. ai-sdk lists it on `/ask`, `/ask-stream`, and `/chat`; `strapi-plugin-ai-sdk-public-chat` references the same middleware as `plugin::ai-sdk.guardrail` on its own `/chat` route, so the public surface stays screened after the split, and the input-extraction step recognizes all four — `/public-chat` uses the same extraction logic as `/chat`, labelled `route: 'public-chat'`. It is not registered at all on `/mcp`, which this plugin does not own (see [MCP Tool Calls Are Not Guardrail-Screened](#mcp-tool-calls-are-not-guardrail-screened)). In Strapi v5, the execution order is:
 
 ```mermaid
 graph LR
@@ -233,7 +235,7 @@ The middleware adapts to each request shape automatically:
 ```mermaid
 graph TB
     Request["Incoming Request"] --> PathCheck{"Route path?"}
-    PathCheck -->|"/chat or /public-chat"| ChatExtract["Extract last user message<br/>from messages[] array"]
+    PathCheck -->|"any /chat path"| ChatExtract["Extract last user message<br/>from messages[] array"]
     PathCheck -->|"/ask or /ask-stream"| AskExtract["Extract prompt field"]
     PathCheck -->|"anything else"| NoMatch["No branch matches → return null<br/>→ middleware calls next() unscreened"]
 

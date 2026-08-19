@@ -43,19 +43,6 @@ export const DEFAULT_MAX_STEPS = 10;
 export const DEFAULT_PUBLIC_MAX_STEPS = 5;
 export const DEFAULT_PUBLIC_CHAT_MODEL = 'claude-haiku-4-5-20251001';
 
-export interface PublicChatConfig {
-  /** Content type UIDs the public chat is allowed to query (e.g. ['api::article.article']) */
-  allowedContentTypes?: string[];
-  /** Plugin tool source IDs allowed in public chat (e.g. ['yt-embeddings-strapi-plugin']). If omitted, no plugin tools are exposed. */
-  publicToolSources?: string[];
-  /** Model to use for public chat (defaults to Haiku for lower cost & higher rate limits) */
-  chatModel?: string;
-  /** Max conversation messages for public chat (defaults to 10) */
-  maxConversationMessages?: number;
-  /** Max tool call steps for public chat (defaults to 2) */
-  maxSteps?: number;
-}
-
 export interface PluginConfig {
   /** Provider-neutral API key. Preferred over the deprecated anthropicApiKey. */
   apiKey?: string;
@@ -70,7 +57,6 @@ export interface PluginConfig {
   /** Max tool call steps for admin chat (defaults to 3) */
   maxSteps?: number;
   guardrails?: GuardrailConfig;
-  publicChat?: PublicChatConfig;
 }
 
 export interface GenerateOptions {

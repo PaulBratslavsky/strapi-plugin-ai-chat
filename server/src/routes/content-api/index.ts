@@ -28,22 +28,5 @@ export default {
         middlewares: ['plugin::ai-sdk.guardrail'],
       },
     },
-    {
-      method: 'POST',
-      path: '/public-chat',
-      handler: 'controller.publicChat',
-      config: {
-        policies: [],
-        middlewares: ['plugin::ai-sdk.guardrail'],
-      },
-    },
-    {
-      method: 'GET',
-      path: '/widget.js',
-      handler: 'controller.serveWidget',
-      config: {
-        policies: [],
-      },
-    },
   ],
 };
