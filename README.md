@@ -1,172 +1,205 @@
 # Strapi Plugin AI SDK
 
-A Strapi v5 plugin that adds an AI-powered chat assistant to the admin panel, exposes AI endpoints for frontend apps (Next.js, etc.), and exposes its tools to external AI clients over Strapi's official MCP server (Strapi >= 5.47). Built on [Vercel AI SDK](https://ai-sdk.dev/) with [Anthropic Claude](https://www.anthropic.com/) as the default provider.
+An AI chat assistant inside the Strapi v5 admin panel, and an MCP tool server that
+exposes the same tools to external AI clients through Strapi's official `/mcp`
+endpoint.
 
-## Features
+Built on the [Vercel AI SDK](https://ai-sdk.dev/). Ships with two providers —
+Anthropic Claude and any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio) —
+and you can register your own.
 
-- **Admin Chat UI** with markdown rendering, tool call visualization, conversation history, and memory management
-- **Content Tools** -- the AI can list content types, search content, create/update documents, and send emails
-- **API Endpoints** -- `/ask`, `/ask-stream`, and `/chat` for frontend consumption (compatible with `useChat` from `@ai-sdk/react`)
-- **Public Chat** -- sandboxed public-facing chat with read-only tools and a separate public memory store
-- **Embeddable Widget** -- drop a single `<script>` tag on any website to add an AI chat bubble
-- **MCP** -- exposes its tools to external AI clients (Claude Desktop, Cursor, etc.) over Strapi's official built-in MCP server (Strapi >= 5.47, admin-token authenticated)
-- **Guardrails** -- regex-based input safety middleware that blocks prompt injection, jailbreaks, and destructive commands
-- **Extensible** -- register custom tools and AI providers at runtime
+The plugin has exactly two surfaces:
 
-## Quick Start
+| Surface | Where | Who authenticates | What it can use |
+|---|---|---|---|
+| **Admin chat** | `/ai-sdk/*` in the admin panel | Logged-in admin (session) | The tools that admin's **role** grants |
+| **MCP** | Strapi's own `POST /mcp` | Admin API token | The tools that **token** grants |
 
-### 1. Install and enable
+The plugin does not serve `/mcp` itself — it registers its tools onto Strapi's
+built-in MCP server at boot.
 
-In your Strapi project's `config/plugins.ts`:
+---
+
+## Contents
+
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration reference](#configuration-reference)
+- [Providers](#providers)
+- [Permissions](#permissions)
+- [Connecting an MCP client](#connecting-an-mcp-client)
+- [Available tools](#available-tools)
+- [Memory, shared memory, notes and tasks](#memory-shared-memory-notes-and-tasks)
+- [Guardrails](#guardrails)
+- [Extending with custom tools](#extending-with-custom-tools)
+- [Bring your own provider](#bring-your-own-provider)
+- [Upgrading from 1.x](#upgrading-from-1x)
+- [Testing](#testing)
+- [Documentation](#documentation)
+
+---
+
+## Requirements
+
+- **Strapi >= 5.47** — earlier versions have no `strapi.ai.mcp`, and the plugin's
+  tool permissions are registered as part of the MCP registration pass. Without
+  it, chat has no tools (see [step 3](#3-enable-strapis-mcp-server)).
+- React 18, `react-router-dom` 6, `styled-components` 6 — the standard Strapi v5
+  admin peer set.
+- An API key for whichever model provider you use.
+- `@strapi/plugin-email` with a configured provider, if you want the `sendEmail`
+  tool to work.
+
+## Installation
+
+### 1. Install the package
+
+```bash
+npm install strapi-plugin-ai-sdk
+```
+
+### 2. Configure the plugin
 
 ```typescript
+// config/plugins.ts
 export default ({ env }) => ({
   'ai-sdk': {
     enabled: true,
-    resolve: 'src/plugins/ai-sdk', // or the npm package path
     config: {
-      anthropicApiKey: env('ANTHROPIC_API_KEY'),
-      chatModel: env('ANTHROPIC_MODEL', 'claude-sonnet-5'),
+      apiKey: env('ANTHROPIC_API_KEY'),
+      chatModel: 'claude-sonnet-5',
     },
   },
 });
 ```
 
-### 2. Set environment variables
+That is the whole minimum. Every other option has a working default — see the
+[configuration reference](#configuration-reference).
 
-```bash
-ANTHROPIC_API_KEY=sk-ant-your-api-key-here
-ANTHROPIC_MODEL=claude-sonnet-5  # optional
+### 3. Enable Strapi's MCP server
+
+This lives in a **different file**, `config/server.ts`, because it is a
+host-application switch, not a plugin setting. No plugin can turn it on for you.
+
+```typescript
+// config/server.ts
+export default ({ env }) => ({
+  host: env('HOST', '0.0.0.0'),
+  port: env.int('PORT', 1337),
+  mcp: {
+    enabled: true,
+  },
+});
 ```
 
-### 3. Build and start
+> **Do not skip this even if you never plan to use MCP.** The plugin registers one
+> admin permission action per tool inside its MCP registration pass. If MCP is
+> disabled, that pass returns early, no tool actions are registered, and nothing
+> can be granted — so the **admin chat gets no tools either**. You will see this
+> at boot:
+>
+> ```
+> [ai-sdk:mcp] Official MCP server not enabled — skipping tool registration.
+> ```
+
+### 4. Set environment variables
+
+```bash
+# .env
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### 5. Build and start
 
 ```bash
 npm run build
 npm run develop
 ```
 
-### 4. Enable permissions
+A healthy boot logs something like:
 
-In the Strapi admin panel:
-
-1. Go to **Settings > Users & Permissions > Roles**
-2. Select **Public** (or your desired role)
-3. Under **Ai-sdk**, enable `ask`, `askStream`, and `chat`
-4. Save
-
-## Embeddable Chat Widget
-
-**Moved out of this plugin in 2.0.0.** The widget and the anonymous chat
-endpoint now live in
-[`strapi-plugin-ai-sdk-public-chat`](https://www.npmjs.com/package/strapi-plugin-ai-sdk-public-chat).
-
-```bash
-npm install strapi-plugin-ai-sdk-public-chat
+```
+[ai-sdk] AI provider configured: provider="anthropic", model="claude-sonnet-5". Resolution happens lazily on first use.
+[ai-sdk] Scanning N plugins for ai-tools: [...]
+[ai-sdk:mcp] Registered 9 custom admin permission(s).
+[ai-sdk:mcp] Registered 8 tool(s) on the official MCP server.
 ```
 
-```html
-<script src="https://your-strapi-url.com/api/ai-sdk-public-chat/widget.js"></script>
-```
+### 6. Grant the tools
 
-### Why it moved
+A fresh install registers one permission action per tool and grants none of them
+to anyone — except the Super Admin role, which Strapi re-syncs with every
+registered action on each boot. So chat works immediately if you are a Super
+Admin, and has **no tools at all** for every other role, and for every admin API
+token, until you tick them.
 
-`publicChat` used to be a second controller method here, next to `chat`, behind
-this plugin's permission set. Granting the Public role
-`plugin::ai-sdk.controller.chat` therefore handed anonymous visitors the full
-admin toolset — `createContent`, `updateContent`, `uploadMedia`, `sendEmail` —
-and nothing about the checkbox said which of the two adjacent endpoints was the
-safe one.
+Read [Permissions](#permissions) next. This is the step people miss, and its
+symptom (an assistant that politely declines to do anything) looks nothing like a
+permissions problem.
 
-The tool filter had the same shape of problem. It selected tools flagged
-`publicSafe: true`, so a tool author decided what anonymous visitors could
-reach and a missing flag failed **open**.
+Then open **AI SDK** in the admin sidebar and start chatting.
 
-The separate plugin inverts both: its own routes and permission namespace, and
-an `allowedTools` list that defaults to **empty**, so nothing is exposed unless
-you name it. Tools added to this plugin later cannot widen that surface.
+---
 
-### Migrating from 1.x
+## Configuration reference
 
-`POST /api/ai-sdk/public-chat` and `GET /api/ai-sdk/widget.js` are **removed**.
-There is no compatibility shim — one would preserve the shared-controller
-problem the split exists to remove.
+Everything under `config` in `config/plugins.ts`:
 
-1. Install `strapi-plugin-ai-sdk-public-chat`.
-2. Move `publicChat` config from `plugin::ai-sdk` to
-   `plugin::ai-sdk-public-chat`. `allowedContentTypes` carries over.
-   `publicToolSources` has no equivalent — name individual tools in
-   `allowedTools`.
-3. On the **Public** role: revoke `publicChat` and `serveWidget` under
-   **Ai-sdk**, grant `chat` and `serveWidget` under **Ai-sdk-public-chat**.
-4. Update embed URLs to `/api/ai-sdk-public-chat/widget.js`.
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `apiKey` | `string` | `''` | API key for the provider. |
+| `provider` | `string` | `'anthropic'` | `'anthropic'`, `'openai-compatible'`, or a name you registered yourself. |
+| `chatModel` | `string` | `'claude-sonnet-5'` | Any model id the provider accepts. Not an allow-list. |
+| `baseURL` | `string` | — | Provider endpoint override. **Required** when `provider` is `'openai-compatible'`. |
+| `systemPrompt` | `string` | built-in prompt | Replaces the default preamble. A `{tools}` placeholder is substituted with the tool list; without it, the tool list is appended. |
+| `maxOutputTokens` | `number` | `8192` | Cap on model output per response. |
+| `maxConversationMessages` | `number` | `15` | History is trimmed to this many messages, keeping tool-call/result pairs intact. |
+| `maxSteps` | `number` | `10` | Tool-call round trips before the model must stop. |
+| `guardrails` | `object` | see below | Prompt-injection screening. See [Guardrails](#guardrails). |
+| `anthropicApiKey` | `string` | `''` | **Deprecated.** Fallback for existing installs; use `apiKey`. Logs a warning at boot. |
 
-> **Check the Public role while you are there.** If it holds
-> `plugin::ai-sdk.controller.chat`, revoke that too — it exposes the full
-> toolset to anonymous visitors, and it is the specific misconfiguration this
-> split was made to rule out.
+`guardrails` accepts:
 
-See that plugin's README for its configuration options.
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | `boolean` | `true` | Set `false` to skip screening entirely. |
+| `maxInputLength` | `number` | `10000` | Characters. Over-length input is blocked. |
+| `additionalPatterns` | `string[]` | `[]` | Extra regex sources, compiled case-insensitively. |
+| `disableDefaultPatterns` | `boolean` | `false` | Drop the built-in pattern set and use only your own. |
+| `blockedMessage` | `string` | built-in message | What the user sees when a request is blocked. |
+| `beforeProcess` | `function` | — | `async ({ text, route, ctx }) => ({ blocked, reason?, sanitized? })`. Runs before pattern matching. |
 
-## Configuration
+Config is validated at boot: `apiKey`, `anthropicApiKey`, `chatModel`, `provider`
+and `baseURL` must be strings, and `openai-compatible` without a `baseURL` throws.
 
-All plugin settings go in `config/plugins.ts` under the `ai-sdk` key:
+---
+
+## Providers
+
+### Anthropic (default)
 
 ```typescript
+// config/plugins.ts
 export default ({ env }) => ({
   'ai-sdk': {
     enabled: true,
     config: {
-      // AI Provider (required)
-      apiKey: env('AI_API_KEY'),                    // provider-neutral (preferred)
-      // anthropicApiKey: env('ANTHROPIC_API_KEY'),  // deprecated alias, still works as a fallback
-      provider: 'anthropic',                        // default; or 'openai-compatible' for local models
-      chatModel: 'claude-sonnet-5',        // default
-      baseURL: undefined,                           // required for provider: 'openai-compatible'
-
-      // System Prompt (optional)
-      systemPrompt: 'You are a helpful CMS assistant.\n\n{tools}',
-
-      // Guardrails (optional)
-      guardrails: {
-        enabled: true,                               // default
-        maxInputLength: 10000,                       // default
-        additionalPatterns: [],                      // extra regex patterns
-        disableDefaultPatterns: false,                // use only your own patterns
-        blockedMessage: 'Custom blocked message.',   // override default message
-      },
+      provider: 'anthropic',
+      apiKey: env('ANTHROPIC_API_KEY'),
+      chatModel: env('ANTHROPIC_MODEL', 'claude-sonnet-5'),
     },
   },
 });
 ```
 
-There is no MCP configuration here — MCP is enabled at the **Strapi** level
-(`mcp: { enabled: true }` in the host's `config/server.ts`), not under this
-plugin's config. See [MCP Server](#mcp-server) below.
+Model ids verified against the Anthropic API: `claude-sonnet-5`, `claude-opus-5`,
+`claude-fable-5`, `claude-haiku-4-5-20251001`. Undated aliases are preferred —
+dated snapshots get retired and silently break the default.
 
-### Anthropic models
+### Ollama and other OpenAI-compatible endpoints
 
-Verified against the Anthropic API on 2026-08-18:
-
-- `claude-sonnet-5` (default)
-- `claude-opus-5`
-- `claude-fable-5`
-- `claude-haiku-4-5-20251001` (public chat default — cheaper, higher rate limits)
-
-This is a reference list, not an allowlist. `chatModel` accepts any string, so
-newer Anthropic ids work without a plugin update — as do local model ids such as
-`gemma4:26b` when using the `openai-compatible` provider.
-
-**Prefer undated aliases** (`claude-sonnet-5`) over dated snapshots
-(`claude-sonnet-4-20250514`). Anthropic retires dated snapshots, and every dated
-id this plugin previously shipped had been retired — which silently broke chat
-for anyone running the defaults.
-
-### Bring your own model (local / self-hosted)
-
-CMS data never has to leave your infrastructure. The plugin ships a built-in
-`openai-compatible` provider that works with any OpenAI-compatible local
-runtime -- Ollama, vLLM, LM Studio, LocalAI -- with config only, no code:
+`openai-compatible` covers Ollama, vLLM, LM Studio, LocalAI, and any hosted API
+that speaks the OpenAI wire format. `baseURL` is required.
 
 ```typescript
 // config/plugins.ts
@@ -175,180 +208,121 @@ export default ({ env }) => ({
     enabled: true,
     config: {
       provider: 'openai-compatible',
-      baseURL: env('AI_BASE_URL', 'http://localhost:11434/v1'), // Ollama's OpenAI-compatible endpoint
-      apiKey: env('AI_API_KEY', 'ollama'),                      // most local runtimes ignore this value but require it be set
-      chatModel: env('AI_MODEL', 'llama3.1'),
+      baseURL: env('OLLAMA_BASE_URL', 'http://localhost:11434/v1'),
+      // No apiKey needed — Ollama has no auth. Pass one only if your
+      // endpoint requires it (some vLLM or LiteLLM deployments do).
+      chatModel: env('OLLAMA_MODEL', 'llama3.1:8b'),
     },
   },
 });
 ```
 
-`baseURL` is required when `provider` is `'openai-compatible'` -- the plugin
-fails fast with an actionable error at config-validation time (and again at
-first model use) rather than silently defaulting to a hosted API.
+`baseURL` is what this provider requires; `apiKey` is optional, since
+self-hosted runtimes generally have no auth. Omitting the baseURL disables the
+assistant with a message naming it.
 
-For any other model host, register your own provider creator instead of
-forking the plugin -- see [Adding an AI Provider](#adding-an-ai-provider) below.
+Nothing leaves the machine in this setup: the model, your content, and the tool
+results all stay local. That is the point of the provider — the same tools and
+the same admin chat, without sending your CMS content to a hosted API.
 
-## API Endpoints
+Pick a model that handles tool calling well; a model that cannot call tools
+reliably will describe what it would do instead of doing it. Verified working
+here: `llama3.1:8b`, `gemma3:27b`. Smaller models tend to break down on
+multi-step chains — search, read the result, then answer.
 
-### Content API
+The chat header shows the active model and marks inference as local when
+`baseURL` points at a loopback, `.local`, or private-range host.
 
-**This plugin no longer exposes any content-API routes.** `/api/ai-sdk/ask`,
-`/ask-stream`, `/chat`, `/public-chat`, and `/widget.js` were all removed in
-2.0.0 and moved to
-[`strapi-plugin-ai-sdk-public-chat`](https://www.npmjs.com/package/strapi-plugin-ai-sdk-public-chat).
+---
 
-They were permissioned per controller method, which cannot express "this
-caller may search but not send email". Granting `controller.chat` handed the
-holder every tool — and on the Public role, that meant anonymous visitors
-could reach `createContent`, `uploadMedia`, and `sendEmail`.
+## Permissions
 
-What remains are two surfaces that both scope **per tool**:
+This is the part that decides whether anything works, so it is worth reading in
+full.
 
-| Surface | Credential | Scoped by |
+### One action per tool
+
+Every tool registers a single admin permission action:
+
+```
+plugin::<owning-plugin>.tool.<slug>
+
+plugin::ai-sdk.tool.search-content
+plugin::ai-sdk.tool.send-email
+plugin::ai-sdk-yt-transcripts.tool.fetch-transcript
+```
+
+Slugs use **hyphens** (Strapi's uid validator rejects underscores), while the MCP
+wire name for the same tool is snake_case — `search_content`. Both are derived
+from the same registry entry, so they can never drift.
+
+A tool contributed by another plugin registers its action under **that plugin's**
+section of the permissions grid, not under ai-sdk's. ai-sdk discovers the tool;
+the contributing plugin owns the permission. Uninstalling that plugin takes its
+actions with it.
+
+### The same actions gate two different callers
+
+| Grant it on | In | Controls |
 |---|---|---|
-| Admin panel chat | admin session | RBAC role grants |
-| `/mcp` | admin API token | token grants |
+| An **admin role** | Settings → Roles | What that admin's chat can use |
+| An **admin API token** | Settings → Admin Tokens | What that token exposes over `/mcp` |
 
-MCP is served by Strapi itself — see [MCP Server](#mcp-server).
+Both kinds of grant are rows in `admin_permissions`, which is why one set of
+actions covers both. Content-API tokens play no part in this plugin.
 
-### Admin API (admin panel only)
+### Ungranted means invisible
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/ai-sdk/chat` | Admin chat with full tool access |
+A caller without a tool's action does not get "permission denied" — the tool is
+never offered at all. Over MCP it is absent from `tools/list`; in chat it is never
+put in front of the model. A token holding none of these actions gets a
+**successful, empty** `tools/list`.
 
-All routes with user input are protected by the guardrail middleware.
+### Granting them
 
-### Tool Details
+**For chat** — Settings → Administration Panel → **Roles** → pick a role → find
+each plugin's section (yours is **AI SDK**, plus one section per tool-contributing
+plugin) → tick the tools that role may use → Save. Users must re-log or refresh
+for a new ability to take effect.
 
-**searchContent** parameters: `contentType` (required), `query`, `filters`, `fields`, `sort`, `page`, `pageSize` (max 50)
+**For MCP** — Settings → Administration Panel → **Admin Tokens** → create or edit
+a token → tick the tools that token may reach → Save.
 
-**createContent** / **updateContent** parameters: `contentType` (required), `documentId` (required for update), `data` (required), `status` (`draft` or `published`)
+> **Super Admin is a special case.** Strapi re-assigns every registered permission
+> action to the Super Admin role on each boot, so a Super Admin's chat picks up all
+> tools without you ticking anything. Every other role — and **every** admin token,
+> including one owned by a Super Admin — starts with nothing and must be granted
+> explicitly. If you test with a Super Admin account and then hand the plugin to an
+> Editor, expect the Editor's chat to have no tools until you grant them.
 
-**sendEmail** parameters: `to` (required), `subject` (required), `html` (required), `text`, `cc`, `bcc`, `replyTo`. The tool always confirms the recipient with the user before sending. See [docs/sending-emails-with-resend.md](./docs/sending-emails-with-resend.md) for setup.
+### Boot warning: nothing grants any tool
 
-## MCP Server
-
-As of `v1.1.0`, MCP is served by **Strapi itself** — the plugin no longer runs
-its own MCP server, sessions, or transport. It registers its tools onto
-Strapi's official built-in MCP server (`strapi.ai.mcp`, Strapi >= 5.47),
-which serves a single endpoint at `/mcp` for the whole application.
-
-This is a breaking change from pre-1.1.0 versions. If you're upgrading, read
-[Migrating from 0.x](#migrating-from-0x) below before touching client
-configs.
-
-### Requirements
-
-- **Strapi >= 5.47.0**
-- The host app's own `config/server.ts` must set `mcp: { enabled: true }` —
-  the plugin cannot turn this on for you:
-
-  ```typescript
-  // config/server.ts
-  export default ({ env }) => ({
-    host: env('HOST', '0.0.0.0'),
-    port: env.int('PORT', 1337),
-    mcp: {
-      enabled: true,
-    },
-  });
-  ```
-
-- An **Admin API token** (not a Content API token — see below) whose role
-  grants the `plugin::ai-sdk.mcp.*` permission(s) for the tools you want to
-  reach.
-
-### How It Works
-
-- The plugin's `ToolRegistry` is unchanged — it still backs the admin chat
-  and public widget. At boot, `registerAiSdkMcpTools()` additionally walks
-  every non-internal tool in the registry and calls
-  `strapi.ai.mcp.registerTool()` for it.
-- Tool names are converted from the registry's camelCase/namespaced form to
-  snake_case (`searchContent` -> `search_content`,
-  `ai-sdk-yt-transcripts__fetchTranscript` ->
-  `ai_sdk_yt_transcripts__fetch_transcript`).
-- Each tool is gated by **its own** admin permission action —
-  `plugin::<owning-plugin>.tool.<slug>`, e.g.
-  `plugin::ai-sdk.tool.search-content` or
-  `plugin::ai-sdk-yt-transcripts.tool.fetch-transcript`. A caller only sees
-  tools it has been granted; permission gating filters `tools/list` itself,
-  not just execution. Tools contributed by another plugin register their
-  actions under **that plugin's** section, not ai-sdk's.
-- Schemas are handed to the SDK as plain Zod 4 objects — no custom
-  Zod-to-JSON-Schema converter. A handful of this plugin's own array/object
-  parameters are wrapped in `jsonCoercible()` so stringified JSON arguments
-  (e.g. `fields: '["title"]'` from `mcp-remote`) still parse; that tolerance
-  is **not** automatic for third-party tools' object/array parameters — see
-  [`docs/plugin-contract.md`](./docs/plugin-contract.md#6-zod-rules).
-- A tool that fails to register (e.g. a name collision with one of Strapi's
-  own auto-derived CRUD tools) is skipped with a warning; it does not break
-  Strapi's boot.
-- Strapi's own auto-generated content tools (`list_<type>`, `get_<type>`,
-  etc.) appear on the same `/mcp` endpoint, alongside this plugin's tools.
-  There's no way to disable the built-ins; gate exposure by only granting the
-  permissions you want a given token to reach.
-- There is no server-level `instructions` hook to advertise "what this server
-  is for" during `initialize` — see
-  [`docs/plugin-contract.md`](./docs/plugin-contract.md#7-server-instructions-are-gone-partial-mitigation-only)
-  for what replaced it and why it's a partial mitigation, not a full one.
-
-For the full contract — the `ai-tools` service shape, `ToolDefinition`,
-namespacing, Zod rules, and per-tool permissions — see
-[`docs/plugin-contract.md`](./docs/plugin-contract.md).
-
-### Setup
-
-#### 1. Enable MCP on the host
-
-Set `mcp: { enabled: true }` in `config/server.ts` (see Requirements above)
-and restart Strapi. Check the log line at boot:
+If no role and no token grants a single tool action, the plugin warns at boot:
 
 ```
-[ai-sdk:mcp] Registered 8 tool(s) on the official MCP server.
+[ai-sdk:mcp] N tool permission(s) registered, but no role or API token grants any
+of them. MCP clients will authenticate successfully and receive an EMPTY
+tools/list, and in-Strapi chat will have no tools. ...
 ```
 
-If instead you see
-`[ai-sdk:mcp] Official MCP server not enabled — skipping tool registration.`,
-either the Strapi version is below 5.47 or `mcp.enabled` is not set.
+The check is advisory and never blocks boot. Note that it runs before Strapi
+re-syncs Super Admin permissions, so you will see it once on a brand-new install
+even though the Super Admin is granted moments later.
 
-#### 2. Grant permissions to an Admin API token
+---
 
-MCP authenticates with **Admin API tokens**, not Content API tokens:
+## Connecting an MCP client
 
-1. Go to **Settings → Administration Panel → API Tokens**
-2. Create a new token (or edit an existing one)
-3. Under **Permissions**, tick the individual tools this token should reach.
-   Each plugin contributing tools gets its own section — built-ins under
-   **Ai sdk**, contributed tools under their own plugin's name.
-4. Copy the token
+`/mcp` is Strapi's own endpoint, using streamable HTTP and authenticated with an
+**Admin API token** — a Content API token will not work.
 
-Scoping is per tool, so a token granted only `search-content` and
-`list-content-types` gets a genuinely browse-only surface — every other tool
-is absent from `tools/list` for that token, not merely refused on execution.
-
-Tick deliberately: some tools cost money or hit an external API per call
-(the YouTube plugins' `fetch-transcript` and `search-yt-knowledge`) even
-though they mutate nothing. Each tool's `access` metadata (`read` / `write`
-/ `destructive`) is a hint about that risk, but it no longer grants anything
-— what a token can do is exactly what you tick.
-
-#### 3. Connect your AI client
-
-The MCP endpoint URL is:
-
-```
-http://localhost:1337/mcp
-```
-
-For remote deployments, replace `localhost:1337` with your Strapi URL.
-
-### Connecting from Claude Desktop
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+1. **Mint the token.** Settings → Administration Panel → **Admin Tokens** → Create
+   new Admin Token. Copy the value; it is shown once.
+2. **Scope it.** On the same screen, tick only the tools that client should reach.
+   A token granted two tools lists exactly two tools.
+3. **Point the client at it.** Clients that can send headers connect directly to
+   `http://localhost:1337/mcp` with `Authorization: Bearer <token>`. For clients
+   that cannot, `mcp-remote` bridges the gap:
 
 ```json
 {
@@ -356,741 +330,250 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
     "strapi": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "-y", "mcp-remote",
         "http://localhost:1337/mcp",
-        "--header",
-        "Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN"
-      ]
+        "--header", "Authorization:Bearer ${STRAPI_ADMIN_TOKEN}"
+      ],
+      "env": { "STRAPI_ADMIN_TOKEN": "your-admin-token" }
     }
   }
 }
 ```
 
-Restart Claude Desktop after saving the config.
+The plugin also registers one MCP resource, `strapi://ai-sdk/tools/guide`, gated
+behind `plugin::ai-sdk.tool.guide`. It is generated on each read from the live
+registry, so contributed tools appear in it automatically. Tool results larger
+than roughly 1 MB on the wire are replaced with a truncation notice rather than
+failing the call.
 
-### Connecting from Claude Code
+**A token that authenticates but sees no tools is not broken** — it has no tool
+actions granted. See [Permissions](#permissions).
 
-Add to `~/.claude/settings.json`:
+---
 
-```json
-{
-  "mcpServers": {
-    "strapi": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "http://localhost:1337/mcp",
-        "--header",
-        "Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN"
-      ]
-    }
-  }
-}
-```
+## Available tools
 
-Or run: `claude mcp add strapi -- npx mcp-remote http://localhost:1337/mcp --header "Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN"`
+Eight tools reach MCP. Six more are chat-only (`internal: true`) and are never
+exposed over MCP.
 
-### Connecting from Cursor
+| Tool | MCP name | Risk tier | What it does |
+|---|---|---|---|
+| `listContentTypes` | `list_content_types` | read | Lists content types and components with fields, relations, and UIDs. The starting point for everything else. |
+| `searchContent` | `search_content` | read | Queries any content type with Strapi filters, sorting, and pagination. |
+| `findOneContent` | `find_one_content` | read | Fetches one document by `documentId` with relations populated. |
+| `aggregateContent` | `aggregate_content` | read | Counts and groups entries — totals, counts by field, counts by date bucket. |
+| `createContent` | `create_content` | write | Creates a document in any content type. |
+| `updateContent` | `update_content` | write | Updates an existing document. |
+| `uploadMedia` | `upload_media` | write | Uploads a file from a URL into the media library and returns its id. |
+| `sendEmail` | `send_email` | destructive | Sends an email through Strapi's email plugin. Requires `@strapi/plugin-email` and a configured provider. |
 
-Add to your Cursor MCP settings (`.cursor/mcp.json`):
+Chat-only tools: `saveMemory`, `recallMemories`, `recallPublicMemories`,
+`saveNote`, `recallNotes`, `manageTask`.
 
-```json
-{
-  "mcpServers": {
-    "strapi": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "http://localhost:1337/mcp",
-        "--header",
-        "Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN"
-      ]
-    }
-  }
-}
-```
+Chat-only tools need no permission grant. They are always available to the
+assistant, because they operate on the calling admin's own memories, notes and
+tasks rather than on project content.
 
-### Testing with the MCP Inspector
+The risk tier is **metadata only** — it labels a tool in the permissions grid to
+help you decide what to tick. It grants nothing and gates nothing; the per-tool
+action does all the gating.
 
-```bash
-npx @modelcontextprotocol/inspector
-```
+---
 
-Connect to `http://localhost:1337/mcp` with a `Streamable HTTP` transport and
-an `Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN` header, then browse
-`tools/list` and the `strapi://ai-sdk/tools/guide` resource.
+## Memory, shared memory, notes and tasks
 
-### Migrating from 0.x
+The chat header links to three stores, all managed from the admin panel and all
+readable by the assistant.
 
-Every existing MCP client config breaks on upgrade to `v1.1.0`. There is no
-backward-compatible shim — this was a hard cutover, not a gradual migration.
+- **Memory Store** — facts about *you*. Every row is scoped to `adminUserId`, so
+  another admin never sees your memories, and they are injected into your system
+  prompt on each chat request.
+- **Shared Memory Store** — team knowledge: product details, policies, conventions.
+  Visible to every admin in the project. Backed by the `public-memory` content
+  type; the name is historical and does **not** mean visible to anonymous
+  visitors — this plugin has no anonymous surface.
+- **Research Notes** — snippets, findings, and references saved out of a
+  conversation as markdown. Per-admin.
 
-1. **Endpoint moved.** `/api/ai-sdk/mcp` (this plugin) is gone. MCP now lives
-   at `/mcp`, served by Strapi itself, shared across the whole application
-   (including any other plugins' MCP tools and Strapi's own auto-generated
-   content tools).
+Tasks are per-admin too, scored by consequence × impact. When the assistant creates
+one it renders a confirmation card in the chat for you to set the scores.
 
-2. **Auth changed from Content API tokens to Admin API tokens.** A Content
-   API token that worked against `/api/ai-sdk/mcp` will not authenticate
-   against `/mcp` at all. You need an **Admin API token** (Settings →
-   Administration Panel → API Tokens), and that token's role must be granted
-   the individual `plugin::<owner>.tool.<slug>` permissions for the tools it
-   should reach — there is no "Ai-sdk: handle" permission to carry forward;
-   it's gone along with the old controller. (Interim releases briefly used
-   four `plugin::ai-sdk.mcp.*` tier actions; those are gone too.)
+Conversations are stored per admin user and listed in the chat sidebar.
 
-   Before:
-   ```json
-   {
-     "mcpServers": {
-       "strapi": {
-         "command": "npx",
-         "args": ["mcp-remote", "http://localhost:1337/api/ai-sdk/mcp",
-           "--header", "Authorization: Bearer YOUR_CONTENT_API_TOKEN"]
-       }
-     }
-   }
-   ```
-   After:
-   ```json
-   {
-     "mcpServers": {
-       "strapi": {
-         "command": "npx",
-         "args": ["mcp-remote", "http://localhost:1337/mcp",
-           "--header", "Authorization: Bearer YOUR_STRAPI_ADMIN_TOKEN"]
-       }
-     }
-   }
-   ```
-
-3. **Server `instructions` are gone.** Clients that decided whether to
-   activate this server based on the old dynamic `/youtube`, `/octalens`
-   -style routing hints in `instructions` no longer get that signal — there
-   is no hook for a plugin to set `instructions` on Strapi's server. The
-   closest replacement is the `strapi://ai-sdk/tools/guide` resource, but a
-   resource is only readable *after* a client has already activated the
-   server, so it does not recreate the old activation-time behavior. See
-   [`docs/plugin-contract.md`](./docs/plugin-contract.md#7-server-instructions-are-gone-partial-mitigation-only).
-
-4. **Stringified JSON arguments are no longer tolerated everywhere.** The old
-   server JSON-parsed any stringified array/object argument for *any*
-   registered tool before running it. The official server validates
-   arguments before the handler runs, so that generic tolerance is gone.
-   This plugin's own array/object parameters (`filters`, `fields`,
-   `populate`, `data` on `searchContent`, `findOneContent`,
-   `aggregateContent`, `createContent`, `updateContent`) still accept a
-   JSON-string form via a `jsonCoercible()` wrapper on those specific
-   parameters — but **third-party tools' object/array parameters get no
-   automatic coercion** unless that tool's author opts in the same way. If
-   you maintain an extension plugin and rely on `mcp-remote` clients sending
-   `tags: '["a","b"]'` instead of `tags: ["a","b"]`, wrap that parameter's
-   schema in `jsonCoercible()` yourself — see
-   [`docs/plugin-contract.md`](./docs/plugin-contract.md#jsoncoercible--opting-an-arrayobject-param-into-json-string-tolerance).
-
-5. **MCP tool calls stopped being guardrail-screened.** Before `v1.1.0`,
-   `POST /api/ai-sdk/mcp` carried this plugin's own guardrail middleware, so
-   MCP tool-call arguments were checked against the same prompt-injection /
-   jailbreak / destructive-command patterns as chat and `/ask` traffic. As of
-   `v1.1.0`, `/mcp` is served by Strapi core — this plugin has no route or
-   controller there, so there is nothing to attach a middleware to. **This
-   protection is genuinely gone, with no config flag to restore it.** The
-   admin-token authentication and per-tool `plugin::<owner>.tool.<slug>`
-   permissions are real mitigations, but they gate *who can call which
-   tools*, not *what a call's arguments contain* — they are not a substitute
-   for content screening. A central middleware layer does exist for anyone
-   who needs this — `strapi.server.use()` mounts a global Koa middleware
-   upstream of `/mcp` — but this plugin does not ship one. See
-   [`docs/guardrails.md`](./docs/guardrails.md#mcp-tool-calls-are-not-guardrail-screened)
-   for the full explanation.
+---
 
 ## Guardrails
 
-The plugin includes a guardrail middleware that checks user input before it reaches the AI. As of 2.0.0 it runs on the admin `/ai-sdk/chat` route — the only route left that carries user input. Its original purpose was screening anonymous traffic; that surface now lives in `strapi-plugin-ai-sdk-public-chat`, which ships its own screening.
+A route middleware screens input to the admin chat route (`POST /ai-sdk/chat`)
+before it reaches the model. It:
 
-### What It Catches
+1. runs your `beforeProcess` hook, if configured;
+2. normalizes the text — NFKC, strip zero-width and invisible characters, collapse
+   whitespace — so obfuscated variants still match;
+3. tests it against the compiled patterns (5 built-in categories: prompt injection,
+   jailbreak, system-prompt extraction, system-prompt mimicry, destructive
+   commands) plus anything in `additionalPatterns`;
+4. enforces `maxInputLength`.
 
-- **Prompt injection** -- "ignore all previous instructions", "override your rules"
-- **Jailbreak attempts** -- "you are now in developer mode", "DAN mode"
-- **System prompt extraction** -- "reveal your system prompt", "what were you told"
-- **System prompt mimicry** -- fake `[SYSTEM]:` delimiters injected in user input
-- **Destructive commands** -- "delete all content", "drop table", "rm -rf"
+A blocked chat request is answered as a normal SSE assistant message, so the UI
+renders the refusal inline instead of erroring.
 
-### How It Works
+> **Scope: this covers the admin chat route only. It does not cover `/mcp`.**
+> That endpoint belongs to Strapi, not to this plugin, so there is no route-scoped
+> middleware slot on it — MCP tool-call arguments reach the tool unscreened. What
+> constrains MCP is access control instead: admin-token authentication plus
+> per-tool permissions. If you need content screening there, put it in the tool's
+> logic or in a global `strapi.server.use()` middleware. See
+> [`docs/guardrails.md`](./docs/guardrails.md).
 
-1. Extract user input (adapts to request shape: `messages` for any `/chat` path, `prompt` for `/ask`/`/ask-stream`)
-2. Run optional `beforeProcess` hook (for custom logic like external moderation APIs)
-3. Normalize text (NFKC, strip zero-width characters, collapse whitespace)
-4. Match against compiled regex patterns
-5. Check input length (default max: 10,000 characters)
+---
 
-Blocked requests return route-aware responses: chat routes get an SSE message (renders naturally in the UI), API routes get a 403 JSON error.
+## Extending with custom tools
 
-For full details, pattern lists, and the `beforeProcess` hook API, see [docs/guardrails.md](./docs/guardrails.md).
-
-## Frontend Integration (Next.js)
-
-### Using `useChat` (Recommended)
-
-The `/chat` endpoint is fully compatible with the `useChat` hook from `@ai-sdk/react`:
-
-```bash
-npm install @ai-sdk/react
-```
-
-```tsx
-'use client';
-
-import { useChat } from '@ai-sdk/react';
-
-export default function Chat() {
-  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
-    api: 'http://localhost:1337/api/ai-sdk-public-chat/chat',
-  });
-
-  return (
-    <div>
-      <div>
-        {messages.map((message) => (
-          <div key={message.id}>
-            <strong>{message.role}:</strong> {message.content}
-          </div>
-        ))}
-      </div>
-
-      <form onSubmit={handleSubmit}>
-        <input
-          value={input}
-          onChange={handleInputChange}
-          placeholder="Type a message..."
-          disabled={isLoading}
-        />
-        <button type="submit" disabled={isLoading}>
-          {isLoading ? 'Sending...' : 'Send'}
-        </button>
-      </form>
-    </div>
-  );
-}
-```
-
-### Non-streaming request
+Any other Strapi plugin can contribute tools. At boot, `discoverPluginTools()`
+scans every registered plugin for a service named exactly `ai-tools`.
 
 ```typescript
-const response = await fetch('http://localhost:1337/api/ai-sdk-public-chat/ask', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    prompt: 'Explain quantum computing in simple terms',
-  }),
-});
+// your-plugin/server/src/services/ai-tools.ts
+import { z } from 'zod'; // your own zod, never '@strapi/utils'
 
-const { data } = await response.json();
-console.log(data.text);
-```
-
-### Streaming request
-
-```typescript
-const response = await fetch('http://localhost:1337/api/ai-sdk-public-chat/ask-stream', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ prompt: 'Write a short story about a robot' }),
-});
-
-const reader = response.body.getReader();
-const decoder = new TextDecoder();
-
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-
-  const chunk = decoder.decode(value, { stream: true });
-  const lines = chunk.split('\n').filter(line => line.startsWith('data: '));
-
-  for (const line of lines) {
-    const data = line.replace('data: ', '');
-    if (data === '[DONE]') continue;
-    const { text } = JSON.parse(data);
-    process.stdout.write(text);
-  }
-}
-```
-
-### cURL
-
-```bash
-# Non-streaming
-curl -X POST http://localhost:1337/api/ai-sdk-public-chat/ask \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello, how are you?"}'
-
-# Streaming
-curl -N -X POST http://localhost:1337/api/ai-sdk-public-chat/ask-stream \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Count from 1 to 10"}'
-```
-
-## Extending the Plugin
-
-### Adding Tools from Other Plugins (Convention-Based Discovery)
-
-Any Strapi plugin can contribute tools to the AI SDK by exposing an `ai-tools` service with a `getTools()` method. The AI SDK discovers these automatically at boot time -- no configuration required.
-
-```mermaid
-flowchart LR
-  subgraph "AI SDK Bootstrap"
-    B[Scan all plugins]
-  end
-
-  subgraph "Plugin A"
-    A1[ai-tools service] --> A2["getTools()"]
-  end
-
-  subgraph "Plugin B"
-    B1[ai-tools service] --> B2["getTools()"]
-  end
-
-  B --> A1
-  B --> B1
-  A2 --> R[ToolRegistry]
-  B2 --> R
-  R --> Chat[Admin Chat]
-  R --> MCP[MCP Server]
-  R --> Public[Public Chat]
-```
-
-#### How It Works
-
-1. On startup, the AI SDK scans every loaded plugin for an `ai-tools` service
-2. If found, it calls `getTools()` which returns an array of `ToolDefinition` objects
-3. Each tool is namespaced as `pluginName__toolName` (e.g., `octalens-mentions__searchMentions`) to prevent collisions — hyphens in the plugin id are preserved here and only converted to underscores later, for MCP (see step 5)
-4. Discovered tools are registered in the shared `ToolRegistry` alongside built-in tools
-5. All non-`internal` registered tools are available in admin chat, public chat (if `publicSafe: true`), and — when the host has enabled MCP (Strapi >= 5.47, `mcp: { enabled: true }`) and the connecting Admin API token's role grants the matching `plugin::ai-sdk.mcp.*` permission — on MCP, as a snake_cased, namespace-prefixed tool name (e.g. `octalens_mentions__search_mentions`)
-
-#### Creating an `ai-tools` Service in Your Plugin
-
-**1. Define canonical tools** in `server/src/tools/`:
-
-```typescript
-// server/src/tools/my-tool.ts
-import { z } from 'zod';
-import type { Core } from '@strapi/strapi';
-
-const schema = z.object({
-  query: z.string().describe('Search query'),
-  limit: z.number().min(1).max(50).optional().default(10).describe('Max results'),
-});
-
-export const mySearchTool = {
-  name: 'mySearch',
-  description: 'Search my plugin data with relevance ranking.',
-  schema,
-  execute: async (args: z.infer<typeof schema>, strapi: Core.Strapi) => {
-    const validated = schema.parse(args);
-    const results = await strapi.documents('plugin::my-plugin.item' as any).findMany({
-      filters: { title: { $containsi: validated.query } },
-      limit: validated.limit,
-    });
-    return { results, total: results.length };
-  },
-  publicSafe: true, // available in public chat (read-only operations)
-};
-```
-
-**2. Create the `ai-tools` service with optional `getMeta()`:**
-
-```typescript
-// server/src/services/ai-tools.ts
-import type { Core } from '@strapi/strapi';
-import { tools } from '../tools';
-
-export default ({ strapi }: { strapi: Core.Strapi }) => ({
+export default () => ({
   getTools() {
-    return tools;
+    return [
+      {
+        name: 'fetchTranscript',
+        description: 'Fetch the transcript of a YouTube video by id.',
+        schema: z.object({
+          videoId: z.string().describe('The YouTube video id'),
+        }),
+        async execute(args, strapi, context) {
+          return { transcript: '...' };
+        },
+        access: 'maintenance', // optional risk label
+      },
+    ];
   },
 
-  /**
-   * Optional: feeds the `strapi://ai-sdk/tools/guide` MCP resource, where
-   * your plugin gets its own labeled section with a description and
-   * keywords. Note this is a resource, not server `instructions` — a client
-   * only sees it after already connecting, not before deciding whether to
-   * activate the server. Without getMeta(), your tools still appear on the
-   * guide, just grouped under the raw plugin id instead of a friendly label.
-   */
+  // Optional — feeds the tool-guide MCP resource
   getMeta() {
     return {
-      label: 'My Plugin',
-      description: 'Search and manage my plugin data with relevance ranking',
-      keywords: ['/my-plugin', 'my data', 'search my stuff'],
+      label: 'YouTube Transcripts',
+      description: 'Fetch, search, and read YouTube video transcripts',
+      keywords: ['/youtube', '/yt', 'transcript'],
     };
   },
 });
 ```
 
-**3. Register the service:**
+`ToolDefinition` fields:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `name` | yes | camelCase. Namespaced to `<plugin-id>__<name>` in the registry. |
+| `description` | yes | Sent to the model verbatim. This is your main lever on whether it gets called well. |
+| `schema` | yes | A `z.ZodObject`. |
+| `execute` | yes | `(args, strapi, context?) => Promise<unknown>`. |
+| `internal` | no | `true` keeps the tool out of MCP entirely; chat-only, and exempt from permission checks. |
+| `access` | no | `'read' \| 'write' \| 'destructive' \| 'maintenance'`. Risk label shown in the permissions grid. Defaults to `'read'` when `publicSafe` is set, otherwise `'write'`. |
+| `publicSafe` | no | Risk metadata only — it grants nothing. It used to decide what anonymous chat could reach; that surface no longer exists here. |
+
+Things worth knowing:
+
+- **Your tool's permission appears under your plugin's own section** of the
+  permissions grid, as `plugin::<your-plugin-id>.tool.<slug>` — not under AI SDK's.
+  A brand-new tool starts ungranted and is invisible until someone ticks it.
+- **Import `z` from your own `zod`**, never from `@strapi/utils`. Both are Zod 4,
+  but `.describe()` text lives in a per-instance registry, and the MCP SDK reads it
+  through its own instance — a schema built with a different instance registers
+  fine and silently loses every parameter description.
+- **Failures are isolated.** A tool missing `name`, `execute`, or `schema` is
+  skipped with a warning; one tool failing to register does not stop the others;
+  and a failure anywhere in the registration pass is logged, not thrown, so Strapi
+  still boots.
+- **Object and array parameters get no automatic JSON-string coercion.** If your
+  clients may send `'["a","b"]'` for an array parameter, wrap it — see
+  `jsonCoercible()` in `server/src/lib/json-coercible.ts`.
+
+Full contract, including namespacing and naming rules:
+[`docs/plugin-contract.md`](./docs/plugin-contract.md).
+
+## Bring your own provider
+
+`anthropic` and `openai-compatible` cover most cases through config alone. For
+anything else, register a provider creator from your app and name it in
+`config.provider`:
 
 ```typescript
-// server/src/services/index.ts
-import myService from './my-service';
-import aiTools from './ai-tools';
-
-export default {
-  'my-service': myService,
-  'ai-tools': aiTools,
-};
-```
-
-That's it. The AI SDK will discover and register your tools on the next Strapi restart.
-
-#### ToolDefinition Interface
-
-```typescript
-interface ToolDefinition {
-  name: string;                    // camelCase, unique within your plugin
-  description: string;             // Clear description for the AI model
-  schema: z.ZodObject<any>;        // Zod schema for parameter validation
-  execute: (args: any, strapi: Core.Strapi, context?: ToolContext) => Promise<unknown>;
-  internal?: boolean;              // If true, hidden from MCP (AI chat only)
-  publicSafe?: boolean;            // If true, available in public/widget chat; also the default MCP tier is 'read' when true
-  access?: 'read' | 'write' | 'destructive' | 'maintenance'; // MCP permission tier override; defaults to 'read' if publicSafe else 'write'. 'maintenance' (expensive / external-API-cost) is never derived — set it explicitly.
-}
-```
-
-**Zod note:** import `z` from your own `zod` package dependency — never from
-`@strapi/utils`. Both are Zod 4, but the MCP SDK's schema converter reads
-`.describe()` text from a per-instance registry; a schema built with
-`@strapi/utils`'s re-exported `z` is invisible to that registry and every
-parameter description silently vanishes in `tools/list`. See
-[`docs/plugin-contract.md`](./docs/plugin-contract.md#6-zod-rules) for the
-full explanation, plus the `jsonCoercible()` helper for opting an
-array/object parameter into stringified-JSON tolerance.
-
-#### ToolSourceMeta Interface (optional `getMeta()`)
-
-When your plugin provides `getMeta()` on its `ai-tools` service, your tools
-get a labeled section — with description and keywords — in the
-`strapi://ai-sdk/tools/guide` MCP resource, instead of being grouped under
-the raw plugin id. This is **not** the same as the old MCP server
-`instructions` string (there is no such hook in Strapi's official server) —
-a resource is only readable after a client has already connected, so it does
-not influence whether a client like Claude Desktop decides to activate the
-server in the first place. It's still useful for an already-connected agent
-deciding which tool to call, or a human browsing capabilities via an
-inspector.
-
-Without `getMeta()`, your tools are still registered and reachable — they
-just appear under the raw plugin id (e.g. `octalens-mentions`) rather than a
-friendly label in the guide.
-
-```typescript
-interface ToolSourceMeta {
-  label: string;          // Human-readable label, e.g. "YouTube Transcripts"
-  description: string;    // One-line capability summary for the tool guide
-  keywords?: string[];    // Displayed alongside the description, e.g. ["/youtube", "/yt", "transcript"]
-}
-```
-
-#### Canonical Architecture Pattern
-
-Your plugin needs **no MCP code at all** — no server, no transport, no
-per-protocol wrapper. Define each tool once in `server/src/tools/` (Zod
-schema + business logic) and expose the array through your `ai-tools`
-service; `strapi-plugin-ai-sdk` bridges it onto every surface itself:
-
-```mermaid
-flowchart TB
-  subgraph "Your Plugin"
-    T["server/src/tools/<br/>Canonical tool definitions<br/>(Zod schema + business logic)"]
-    S["services/ai-tools.ts<br/>getTools() → tools array"]
-    T --> S
-  end
-
-  subgraph "strapi-plugin-ai-sdk"
-    R["ToolRegistry<br/>(namespaced at discovery)"]
-    Bridge["mcp/register-tools.ts<br/>strapi.ai.mcp.registerTool()"]
-    R --> Bridge
-  end
-
-  S -->|"discovered at boot"| R
-  R --> Chat["Admin Chat"]
-  R --> Widget["Public Widget (if publicSafe)"]
-  Bridge -->|"tools/call"| MCPCore["strapi.ai.mcp (Strapi core, /mcp)"]
-  MCPCore --> Clients["Claude Desktop / Cursor / etc."]
-```
-
-This eliminates duplication -- business logic lives in one place, and the hub
-plugin is the only thing that ever touches MCP. If you're maintaining an
-older plugin that still runs its own MCP server and transport code, that's
-the pattern this replaces — see
-[`docs/mcp-consolidation.md`](./docs/mcp-consolidation.md) for the migration
-guide.
-
-#### Real-World Examples
-
-Two plugins already use this pattern:
-
-**[strapi-octolens-mentions-plugin](../strapi-octolens-mentions-plugin/)** -- Contributes 4 tools: `searchMentions` (BM25 relevance search), `listMentions`, `getMention`, `updateMention`
-
-**[strapi-content-embeddings](../strapi-content-embeddings/)** -- Contributes 5 tools: `semanticSearch` (vector similarity), `ragQuery` (RAG), `listEmbeddings`, `getEmbedding`, `createEmbedding`
-
-### Adding a Custom Tool (Without a Plugin)
-
-**Option A: Inside the plugin** -- create files in `tools/definitions/` and `tool-logic/`, add to the `builtInTools` array.
-
-**Option B: At runtime from your Strapi app:**
-
-```typescript
-// src/index.ts (your Strapi app)
-import { z } from 'zod';
-
-export default {
-  bootstrap({ strapi }) {
-    const plugin = strapi.plugin('ai-sdk');
-    plugin.toolRegistry.register({
-      name: 'analyzeContent',
-      description: 'Analyze content quality and suggest improvements',
-      schema: z.object({
-        contentType: z.string().describe('Content type UID'),
-        documentId: z.string().describe('Document ID to analyze'),
-      }),
-      execute: async (args, strapi) => {
-        const doc = await strapi.documents(args.contentType).findOne({
-          documentId: args.documentId,
-        });
-        return { score: 85, suggestions: ['Add more headings'] };
-      },
-    });
-  },
-};
-```
-
-The tool is automatically available in AI chat and, on the next Strapi restart, MCP (unless `internal: true`) — gated by its own `plugin::<owner>.tool.<slug>` action, registered automatically under the owning plugin's section. No changes to `tools/index.ts` or `mcp/register-tools.ts` needed. The new action starts **ungranted**: tick it on a role (for chat) or a token (for MCP) before the tool becomes reachable.
-
-### Adding an AI Provider
-
-The `openai-compatible` provider built into the plugin (see
-[Bring your own model](#bring-your-own-model-local--self-hosted) above)
-covers most local/self-hosted runtimes with config alone. For anything else
--- a provider with a different request shape, a managed API the plugin
-doesn't know about -- register your own creator through the plugin's
-`provider` service. This is the supported way to reach `AIProvider`: the
-package's `exports` map does not expose deep imports like
-`strapi-plugin-ai-sdk/server`, by design.
-
-```typescript
-// src/index.ts (your Strapi app)
-import { createOpenAI } from '@ai-sdk/openai';
-
+// src/index.ts
 export default {
   register({ strapi }) {
     strapi.plugin('ai-sdk').service('provider').register(
-      'openai',
+      'my-model',
       ({ apiKey, baseURL }) => {
-        const provider = createOpenAI({ apiKey, baseURL });
-        return (modelId: string) => provider(modelId);
+        const client = createMyClient({ apiKey, baseURL });
+        return (modelId: string) => client.languageModel(modelId);
       }
     );
   },
 };
 ```
 
-Then set `provider: 'openai'` and `chatModel: 'gpt-4o'` in config.
+Providers resolve lazily on first model use, so registering from `register()` or
+`bootstrap()` both work — ordering against the plugin's own lifecycle does not
+matter.
 
-Registration can happen in either `register()` or `bootstrap()` of your
-Strapi app -- the plugin resolves the named provider **lazily, on first
-model use**, not during its own bootstrap. So even though Strapi runs plugin
-bootstraps before the host app's bootstrap, registering later than the
-plugin's own bootstrap is fine. If the named provider is still unregistered
-by the time a request actually needs a model, you get a clear error listing
-what *is* registered, rather than a silent failure.
+---
 
-### Customizing the System Prompt
+## Upgrading from 1.x
 
-```typescript
-// config/plugins.ts
-config: {
-  // Simple replacement (tool descriptions appended automatically)
-  systemPrompt: 'You are a friendly content editor for our blog platform.',
+**Permission grants are pruned.** Versions before 1.2.0 gated MCP behind four tier
+actions — `plugin::ai-sdk.mcp.read`, `.write`, `.destructive`, `.maintenance`.
+Those actions no longer exist, so Strapi deletes every permission row that
+referenced them.
 
-  // Or use {tools} placeholder for precise placement
-  systemPrompt: `You are a blog assistant.
+The symptom is deeply misleading: your admin token still authenticates, `/mcp`
+still responds, `tools/list` still returns `200` — with an empty list. Boot logs
+look completely healthy. 2.0.1 adds a boot warning for exactly this state.
 
-RULES:
-- Always use friendly language
-- Never create content without confirmation
+**The fix:** re-grant the tools individually. For each admin token, Settings →
+Admin Tokens → tick the tools it should reach. For each non-Super-Admin role,
+Settings → Roles → tick the tools that role's chat should use.
 
-{tools}
+**Also removed in 2.0.0:** the content-API routes (`/api/ai-sdk/ask`,
+`/ask-stream`, `/chat`, `/public-chat`) and the embeddable widget. Anonymous chat
+now lives in a separate plugin, `strapi-plugin-ai-sdk-public-chat`, not yet
+published to npm.
 
-When listing content types, summarize them in a table.`,
-}
-```
-
-Per-request `system` overrides in the request body take priority over the configured `systemPrompt`.
-
-## Admin Panel Features
-
-The plugin adds a chat interface to the Strapi admin panel with:
-
-- **Chat UI** -- message list with markdown rendering, tool call visualization, and typing indicator
-- **Conversation History** -- persistent conversations stored per-user, accessible via the sidebar
-- **Memory Management** -- the AI remembers facts across conversations; view and manage memories from the toolbar
-- **Public Memory Store** -- shared facts available to public chat visitors (FAQ, policies, etc.)
-- **Tool Call Display** -- collapsible viewer showing tool inputs and outputs inline in the chat
-- **Widget Preview** -- live preview of the embeddable chat widget with copy-paste embed code
-- **Model Badge** -- the chat header shows the active model and whether inference is
-  **Local** or **Hosted**, so it is obvious at a glance whether content is leaving your
-  infrastructure. Backed by `GET /ai-sdk/model-info`, which reads `provider`, `chatModel`
-  and `baseURL` from plugin config. "Local" is derived from the **baseURL host** (loopback
-  or private range), not the provider name — `openai-compatible` also covers hosted
-  OpenAI-compatible APIs, and a privacy claim should not be inferred from a label.
-
-## Error Handling
-
-| Error | Cause | Solution |
-|-------|-------|----------|
-| `prompt is required` | Missing prompt in request | Include `prompt` in request body |
-| `AI SDK not initialized` | Missing API key | Check `ANTHROPIC_API_KEY` in `.env` |
-| `403 Forbidden` | Permissions not enabled | Enable permissions in Strapi admin |
-| `Request blocked by guardrails` | Input matched a safety pattern | Rephrase the prompt |
-
-Error response format:
-
-```json
-{
-  "error": {
-    "status": 400,
-    "name": "BadRequestError",
-    "message": "prompt is required and must be a string"
-  }
-}
-```
-
-## Project Structure
-
-```
-server/src/
-  index.ts                    # Server entry point
-  register.ts                 # Plugin register lifecycle
-  bootstrap.ts                # Initialize providers, tools, MCP, plugin tool discovery
-  destroy.ts                  # Graceful shutdown
-  config/index.ts             # Plugin config defaults
-  guardrails/                 # Input safety middleware
-  lib/
-    ai-provider.ts            # AIProvider with static provider registry
-    tool-registry.ts          # ToolRegistry class
-    types.ts                  # Shared types
-    utils.ts                  # Controller helpers
-  controllers/
-    controller.ts             # ask, askStream, chat, getModelInfo, getToolSources handlers
-    public-memory.ts          # CRUD for public memories
-    # no mcp.ts — MCP has no controller in this plugin; /mcp is served by Strapi core
-  services/service.ts         # AI service facade
-  routes/
-    content-api/index.ts      # Public API routes (/mcp is not one of them)
-    admin/index.ts            # Admin routes
-  tools/
-    index.ts                  # Bridge: registry -> AI SDK ToolSet
-    definitions/              # Tool definitions (schema + execute wrapper)
-  tool-logic/                 # Pure business logic (shared by AI SDK + MCP)
-  mcp/                        # Bridge onto Strapi's official MCP server (v1.1.0+)
-    index.ts                  # registerAiSdkMcpTools() — entry point, called from bootstrap.ts
-    permissions.ts             # registers plugin::ai-sdk.mcp.{read,write,destructive,maintenance}
-    register-tools.ts          # walks registry.getPublic(), calls strapi.ai.mcp.registerTool()
-    register-resources.ts      # registers the strapi://ai-sdk/tools/guide resource
-    access.ts                  # read/write/destructive/maintenance tier derivation
-    naming.ts                  # camelCase/namespace -> MCP snake_case name conversion
-    size-guard.ts              # ~1MB wire-size backstop
-    resources/tool-guide.ts    # tool-guide markdown generator
-    utils/sanitize.ts          # Content API sanitization
-
-admin/src/
-  pages/                      # App router, HomePage, WidgetPreviewPage, MemoryStorePage
-  components/
-    Chat.tsx                  # Chat orchestrator
-    MessageList.tsx           # Message rendering with markdown
-    ChatInput.tsx             # Input area
-    ToolCallDisplay.tsx       # Tool call viewer
-    ConversationSidebar.tsx   # Conversation history panel
-    MemoryPanel.tsx           # Memory management panel
-  hooks/
-    useChat.ts                # Chat state + SSE streaming
-    useConversations.ts       # Conversation CRUD
-    useMemories.ts            # Memory CRUD
-
-widget/src/                     # Embeddable chat widget (separate Vite build)
-  embed.tsx                     # Auto-mount entry (Shadow DOM)
-  react.tsx                     # React component export
-  auto-detect.ts                # Script URL detection
-  styles.css                    # Scoped CSS (no Tailwind)
-  components/strapi-chat.tsx    # Chat UI component
-
-tests/                          # E2E integration tests
-docs/                           # Architecture + guardrails + email guides
-```
+---
 
 ## Testing
 
-The plugin uses end-to-end integration tests against a running Strapi instance:
-
 ```bash
-npm run test:mcp-scoping   # Per-tool MCP permission scoping (needs admin credentials)
-npm run test:unit          # Vitest unit tests (no Strapi needed)
-npm run test:ts:back       # Server TypeScript type checking (no Strapi needed)
-npm run test:ts:front      # Admin TypeScript type checking (no Strapi needed)
+npm run test:unit          # vitest unit suite
+npm run test:unit:watch    # watch mode
+npm run test:ts:back       # typecheck the server
+npm run test:ts:front      # typecheck the admin
 ```
 
-### Prerequisite: an admin token with tool grants
-
-The HTTP suites talk to `/mcp`, which needs an **admin** API token (not a
-content-API one). A token with no grants authenticates fine and returns an
-empty `tools/list`, so the suite fails in a way that looks like a broken
-server rather than a missing permission.
-
-Mint one in **Settings → Administration Panel → Admin Tokens** and tick the
-tools it should reach under each plugin's section, then:
+Two suites need a live Strapi with MCP enabled and an admin token:
 
 ```bash
-export STRAPI_ADMIN_TOKEN=your-admin-token
+npm run test:e2e           # structural: tools/list shape, scoping, tool-guide resource
+E2E_LIVE=1 npm run test:e2e:live   # makes real API calls
+
+# per-tool permission scoping against a live server; mints and deletes its own tokens
+STRAPI_URL=http://localhost:1337 ADMIN_EMAIL=you@example.com ADMIN_PASSWORD=... \
+  npm run test:mcp-scoping
 ```
-
-There is no Public-role prerequisite any more. This plugin serves no
-content-API routes as of 2.0.0 — if you are looking for the anonymous
-surface, it lives in `strapi-plugin-ai-sdk-public-chat`.
-
-With authentication:
-
-```bash
-STRAPI_ADMIN_TOKEN=your-admin-token npm run test:e2e
-```
-
-**MCP E2E suite** (separate from the scripts above — vitest-based, lives in `tests/e2e/`):
-
-```bash
-npm run test:e2e           # Structural, free — tool exposure, permission scoping, .describe() preservation, etc.
-E2E_LIVE=1 npm run test:e2e:live   # Live pipeline — real YouTube/OpenAI/Neon calls
-```
-
-Both require a Strapi host >= 5.47 with `mcp: { enabled: true }`, all three
-plugins linked, and `STRAPI_URL` / `STRAPI_ADMIN_TOKEN` (an admin token
-granting the `plugin::ai-sdk.mcp.*` permissions) set.
-
-**Status:** `test:e2e` (structural) has been run green — 12/12, including tool exposure,
-permission scoping and `.describe()` preservation. `test:e2e:live` remains **unverified**:
-it depends on YouTube transcript ingestion. That path was broken by a 400 from
-`youtubei/v1/player` on `youtubei.js` 16.x and was fixed by upgrading to 17.x;
-transcripts now fetch with or without a proxy. See
-[`docs/plugin-contract.md`](./docs/plugin-contract.md#9-e2e-suites--unverified-prerequisites)
-for the full prerequisite list before relying on them.
 
 ## Documentation
 
-- [Plugin Contract](./docs/plugin-contract.md) -- the `ai-tools` service contract, `ToolDefinition`, namespacing, Zod rules, and per-tool permissions (source of truth)
-- [Architecture](./docs/architecture.md) -- full system architecture, data flows, extension guides
-- [Plugin Tool Discovery](./docs/plugin-tool-discovery.md) -- cross-plugin tool discovery architecture and implementation
-- [Tool Standardization Spec](./docs/tool-standardization-spec.md) -- canonical tool format, Zod-first vs MCP-native comparison, portability
-- [Guardrails](./docs/guardrails.md) -- guardrail system, pattern lists, `beforeProcess` hook API
-- [Sending Emails with Resend](./docs/sending-emails-with-resend.md) -- Resend setup, email tool, domain verification
+- [`docs/architecture.md`](./docs/architecture.md) — system architecture, lifecycle,
+  data flows
+- [`docs/plugin-contract.md`](./docs/plugin-contract.md) — the `ai-tools` contract
+  for plugin authors
+- [`docs/guardrails.md`](./docs/guardrails.md) — guardrail internals, patterns, and
+  the MCP gap
 
 ## License
 
