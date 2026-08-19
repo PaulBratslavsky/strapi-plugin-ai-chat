@@ -1,5 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { registerAiSdkMcpTools } from './mcp';
 import { AIProvider } from './lib/ai-provider';
 import { ToolRegistry } from './lib/tool-registry';
@@ -28,14 +29,32 @@ function initializeProvider(strapi: Core.Strapi, plugin: PluginInstance, config:
     return (modelId: string) => provider(modelId);
   });
 
+  // Built-in bring-your-own-model provider: any OpenAI-compatible local
+  // runtime (Ollama, vLLM, LM Studio, LocalAI, ...) works via config alone —
+  // no user code required. baseURL is required and validated lazily on
+  // first model use (see AIProvider.ensureModelFactory).
+  AIProvider.registerProvider('openai-compatible', ({ apiKey, baseURL }) => {
+    const provider = createOpenAICompatible({
+      name: 'openai-compatible',
+      baseURL: baseURL as string,
+      apiKey,
+    });
+    return (modelId: string) => provider(modelId);
+  });
+
   const aiProvider = new AIProvider();
-  const initialized = aiProvider.initialize(config);
+  const initialized = aiProvider.initialize(config, strapi.log);
 
   if (initialized) {
     plugin.aiProvider = aiProvider;
-    strapi.log.info(`[${PLUGIN_ID}] AI provider initialized with model: ${aiProvider.getChatModel()}`);
+    strapi.log.info(
+      `[${PLUGIN_ID}] AI provider configured: provider="${config?.provider ?? 'anthropic'}", model="${aiProvider.getChatModel()}". ` +
+      `Resolution happens lazily on first use.`
+    );
   } else {
-    strapi.log.warn(`[${PLUGIN_ID}] anthropicApiKey not configured, AI provider will not be available`);
+    strapi.log.warn(
+      `[${PLUGIN_ID}] No API key configured (set "apiKey", or the deprecated "anthropicApiKey"). AI provider will not be available.`
+    );
   }
 }
 

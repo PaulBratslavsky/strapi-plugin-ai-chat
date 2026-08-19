@@ -41,7 +41,10 @@ export interface PublicChatConfig {
 }
 
 export interface PluginConfig {
-  anthropicApiKey: string;
+  /** Provider-neutral API key. Preferred over the deprecated anthropicApiKey. */
+  apiKey?: string;
+  /** @deprecated Use `apiKey` instead. Kept as a fallback for existing installs. */
+  anthropicApiKey?: string;
   provider?: string;
   chatModel?: string;
   baseURL?: string;

@@ -146,10 +146,11 @@ export default ({ env }) => ({
     enabled: true,
     config: {
       // AI Provider (required)
-      anthropicApiKey: env('ANTHROPIC_API_KEY'),
-      provider: 'anthropic',                        // default
+      apiKey: env('AI_API_KEY'),                    // provider-neutral (preferred)
+      // anthropicApiKey: env('ANTHROPIC_API_KEY'),  // deprecated alias, still works as a fallback
+      provider: 'anthropic',                        // default; or 'openai-compatible' for local models
       chatModel: 'claude-sonnet-4-20250514',        // default
-      baseURL: undefined,                           // custom API base URL
+      baseURL: undefined,                           // required for provider: 'openai-compatible'
 
       // System Prompt (optional)
       systemPrompt: 'You are a helpful CMS assistant.\n\n{tools}',
@@ -184,6 +185,34 @@ plugin's config. See [MCP Server](#mcp-server) below.
 - `claude-haiku-4-5-20251001`
 - `claude-3-5-sonnet-20241022`
 - `claude-3-5-haiku-20241022`
+
+### Bring your own model (local / self-hosted)
+
+CMS data never has to leave your infrastructure. The plugin ships a built-in
+`openai-compatible` provider that works with any OpenAI-compatible local
+runtime -- Ollama, vLLM, LM Studio, LocalAI -- with config only, no code:
+
+```typescript
+// config/plugins.ts
+export default ({ env }) => ({
+  'ai-sdk': {
+    enabled: true,
+    config: {
+      provider: 'openai-compatible',
+      baseURL: env('AI_BASE_URL', 'http://localhost:11434/v1'), // Ollama's OpenAI-compatible endpoint
+      apiKey: env('AI_API_KEY', 'ollama'),                      // most local runtimes ignore this value but require it be set
+      chatModel: env('AI_MODEL', 'llama3.1'),
+    },
+  },
+});
+```
+
+`baseURL` is required when `provider` is `'openai-compatible'` -- the plugin
+fails fast with an actionable error at config-validation time (and again at
+first model use) rather than silently defaulting to a hosted API.
+
+For any other model host, register your own provider creator instead of
+forking the plugin -- see [Adding an AI Provider](#adding-an-ai-provider) below.
 
 ## API Endpoints
 
@@ -934,22 +963,41 @@ The tool is automatically available in AI chat and, on the next Strapi restart, 
 
 ### Adding an AI Provider
 
+The `openai-compatible` provider built into the plugin (see
+[Bring your own model](#bring-your-own-model-local--self-hosted) above)
+covers most local/self-hosted runtimes with config alone. For anything else
+-- a provider with a different request shape, a managed API the plugin
+doesn't know about -- register your own creator through the plugin's
+`provider` service. This is the supported way to reach `AIProvider`: the
+package's `exports` map does not expose deep imports like
+`strapi-plugin-ai-sdk/server`, by design.
+
 ```typescript
 // src/index.ts (your Strapi app)
 import { createOpenAI } from '@ai-sdk/openai';
 
 export default {
   register({ strapi }) {
-    const { AIProvider } = require('strapi-plugin-ai-sdk/server');
-    AIProvider.registerProvider('openai', ({ apiKey, baseURL }) => {
-      const provider = createOpenAI({ apiKey, baseURL });
-      return (modelId) => provider(modelId);
-    });
+    strapi.plugin('ai-sdk').service('provider').register(
+      'openai',
+      ({ apiKey, baseURL }) => {
+        const provider = createOpenAI({ apiKey, baseURL });
+        return (modelId: string) => provider(modelId);
+      }
+    );
   },
 };
 ```
 
 Then set `provider: 'openai'` and `chatModel: 'gpt-4o'` in config.
+
+Registration can happen in either `register()` or `bootstrap()` of your
+Strapi app -- the plugin resolves the named provider **lazily, on first
+model use**, not during its own bootstrap. So even though Strapi runs plugin
+bootstraps before the host app's bootstrap, registering later than the
+plugin's own bootstrap is fine. If the named provider is still unregistered
+by the time a request actually needs a model, you get a clear error listing
+what *is* registered, rather than a silent failure.
 
 ### Customizing the System Prompt
 

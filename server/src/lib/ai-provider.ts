@@ -27,15 +27,46 @@ import {
 
 type ProviderCreator = (config: { apiKey: string; baseURL?: string }) => (modelId: string) => LanguageModel;
 
+/**
+ * Resolves the API key from config, preferring the provider-neutral `apiKey`
+ * field and falling back to the legacy `anthropicApiKey` field for backward
+ * compatibility with existing installs. Logs a one-time deprecation warning
+ * when only the legacy field is set.
+ */
+let deprecationWarned = false;
+function resolveApiKey(cfg: Partial<PluginConfig> | undefined, log?: { warn: (msg: string) => void }): string | undefined {
+  if (cfg?.apiKey) {
+    return cfg.apiKey;
+  }
+  if (cfg?.anthropicApiKey) {
+    if (!deprecationWarned) {
+      deprecationWarned = true;
+      log?.warn(
+        '[ai-sdk] Config field "anthropicApiKey" is deprecated, use "apiKey" instead. ' +
+        '"anthropicApiKey" will continue to work as a fallback.'
+      );
+    }
+    return cfg.anthropicApiKey;
+  }
+  return undefined;
+}
+
 export class AIProvider {
   private static readonly providerRegistry = new Map<string, ProviderCreator>();
 
   private modelFactory: ((modelId: string) => LanguageModel) | null = null;
   private model: string = DEFAULT_MODEL;
+  private providerName: string = 'anthropic';
+  private apiKey: string | undefined;
+  private baseURL: string | undefined;
+  private configured = false;
 
   /**
-   * Register a named provider creator.
-   * Call this before initialize() — typically in bootstrap.
+   * Register a named provider creator. Safe to call at any point — plugin
+   * bootstrap, a host app's register()/bootstrap(), or later — because
+   * provider *resolution* is deferred until the first model call (see
+   * ensureModelFactory below). This makes registration timing relative to
+   * the plugin's own bootstrap irrelevant.
    */
   static registerProvider(name: string, creator: ProviderCreator): void {
     AIProvider.providerRegistry.set(name, creator);
@@ -43,39 +74,71 @@ export class AIProvider {
 
   /**
    * Initialize the provider with plugin configuration.
+   * This only captures config (apiKey/provider/baseURL/model) — it does NOT
+   * resolve the provider creator from the registry. Resolution is deferred
+   * to first use (see ensureModelFactory) so that a provider registered
+   * after bootstrap (e.g. by a host app) still works.
    * Returns false if config is missing required fields.
    */
-  initialize(config: unknown): boolean {
+  initialize(config: unknown, log?: { warn: (msg: string) => void }): boolean {
     const cfg = config as Partial<PluginConfig> | undefined;
 
-    if (!cfg?.anthropicApiKey) {
+    const apiKey = resolveApiKey(cfg, log);
+    if (!apiKey) {
       return false;
     }
 
-    const providerName = cfg.provider ?? 'anthropic';
-    const creator = AIProvider.providerRegistry.get(providerName);
-    if (!creator) {
-      throw new Error(
-        `AI provider "${providerName}" not registered. ` +
-        `Registered: ${[...AIProvider.providerRegistry.keys()].join(', ') || 'none'}. ` +
-        `Register providers in bootstrap before initializing.`
-      );
-    }
+    this.apiKey = apiKey;
+    this.baseURL = cfg?.baseURL;
+    this.providerName = cfg?.provider ?? 'anthropic';
 
-    this.modelFactory = creator({ apiKey: cfg.anthropicApiKey, baseURL: cfg.baseURL });
-
-    if (cfg.chatModel) {
+    if (cfg?.chatModel) {
       this.model = cfg.chatModel;
     }
 
+    this.configured = true;
     return true;
   }
 
-  private getLanguageModel(modelId?: string): LanguageModel {
-    if (!this.modelFactory) {
+  /**
+   * Lazily resolves the model factory from the provider registry. Deferred
+   * to first use rather than initialize()/bootstrap() time so that provider
+   * registration order relative to the plugin's own bootstrap never matters.
+   */
+  private ensureModelFactory(): (modelId: string) => LanguageModel {
+    if (this.modelFactory) {
+      return this.modelFactory;
+    }
+
+    if (!this.configured) {
       throw new Error('AIProvider not initialized');
     }
-    return this.modelFactory(modelId ?? this.model);
+
+    const creator = AIProvider.providerRegistry.get(this.providerName);
+    if (!creator) {
+      throw new Error(
+        `AI provider "${this.providerName}" not registered. ` +
+        `Registered: ${[...AIProvider.providerRegistry.keys()].join(', ') || 'none'}. ` +
+        `Register it via strapi.plugin('ai-sdk').service('provider').register('${this.providerName}', creator) ` +
+        `in your app's src/index.ts register() (or bootstrap()), or use a built-in provider name ` +
+        `('anthropic' or 'openai-compatible').`
+      );
+    }
+
+    if (this.providerName === 'openai-compatible' && !this.baseURL) {
+      throw new Error(
+        `AI provider "openai-compatible" requires a "baseURL" (e.g. http://localhost:11434/v1 for Ollama). ` +
+        `Set plugin::ai-sdk config { provider: 'openai-compatible', baseURL: '...' }.`
+      );
+    }
+
+    this.modelFactory = creator({ apiKey: this.apiKey ?? '', baseURL: this.baseURL });
+    return this.modelFactory;
+  }
+
+  private getLanguageModel(modelId?: string): LanguageModel {
+    const factory = this.ensureModelFactory();
+    return factory(modelId ?? this.model);
   }
 
   private buildParams(input: GenerateInput) {
@@ -124,11 +187,17 @@ export class AIProvider {
     return this.model;
   }
 
+  /**
+   * True once config has been captured (apiKey + provider known), even
+   * before the provider creator has actually been resolved from the
+   * registry — resolution happens lazily on first model use.
+   */
   isInitialized(): boolean {
-    return this.modelFactory !== null;
+    return this.configured;
   }
 
   destroy(): void {
     this.modelFactory = null;
+    this.configured = false;
   }
 }
