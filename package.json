@@ -1,5 +1,5 @@
 {
-  "version": "2.2.1",
+  "version": "2.2.2",
   "keywords": [
     "strapi",
     "strapi-plugin",
@@ -29,7 +29,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
   "scripts": {
     "build": "strapi-plugin build",
