@@ -8,27 +8,21 @@ Built on the [Vercel AI SDK](https://ai-sdk.dev/).
 
 ## Bring your own model
 
-The model is yours to choose, and nothing about the plugin assumes a vendor.
-Point it at Anthropic, at an open-weight model you run yourself, or at a
-provider you register in a few lines — the tools, permissions, and MCP surface
-are identical either way.
+Run any model you want — including open-source ones you host yourself.
 
-- **Run open-source models locally.** Qwen, Gemma, Llama, Mistral, DeepSeek and
-  friends through Ollama, llama-swap, vLLM or LM Studio. Your content, the
-  model, and every tool result stay on your machine — nothing reaches an API.
-- **Or self-host them on your own cloud hardware.** Same configuration, just a
-  different `baseURL`. No model vendor is involved.
-- **Or use a hosted endpoint** — Anthropic, or an inference vendor serving open
-  weights.
-- **Or register a provider of your own**, if none of the above fits.
+- **Locally** — Qwen, Gemma, Llama, Mistral, DeepSeek via Ollama, llama-swap,
+  vLLM or LM Studio. Nothing leaves your machine.
+- **On your own cloud hardware** — same config, different `baseURL`.
+- **Hosted** — Anthropic, or a vendor serving open weights.
+- **Your own provider** — register one in a few lines.
 
-That last point matters for CMS content in particular: a Strapi instance holds
-unpublished drafts, customer records and internal documents, and this plugin
-hands a model tools that read and write them. Being able to keep all of that
-inside your own network is the difference between "we can use this" and "legal
-said no".
+The tools, permissions, and MCP surface are identical either way.
 
-See [Providers](#providers) for working configuration for each.
+This matters for a CMS: Strapi holds unpublished drafts, customer records and
+internal documents, and the plugin gives the model tools that read and write
+them. Keeping that in your own network is often what makes it usable at all.
+
+See [Providers](#providers) for working config for each.
 
 The plugin has exactly two surfaces:
 
