@@ -3,6 +3,12 @@ export default {
   routes: [
     {
       method: 'GET',
+      path: '/model-health',
+      handler: 'controller.getModelHealth',
+      config: { policies: [] },
+    },
+    {
+      method: 'GET',
       path: '/model-info',
       handler: 'controller.getModelInfo',
       config: { policies: [] },

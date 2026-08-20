@@ -24,3 +24,39 @@ export async function fetchModelInfo(): Promise<ModelInfo | null> {
     return null;
   }
 }
+
+export type ModelHealthStatus =
+  | 'ok'
+  | 'down'
+  | 'unauthorized'
+  | 'model-missing'
+  | 'unconfigured'
+  | 'unknown';
+
+export interface ModelHealth {
+  status: ModelHealthStatus;
+  detail: string | null;
+  provider: string;
+  model: string;
+  checkedAt: string;
+}
+
+/**
+ * Ask whether the configured model is reachable.
+ *
+ * Returns null if the check itself could not run, which the caller should treat
+ * as "no information" rather than "the model is down".
+ */
+export async function fetchModelHealth(): Promise<ModelHealth | null> {
+  try {
+    const token = getToken();
+    const res = await fetch(`${getBackendURL()}/${PLUGIN_ID}/model-health`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { data?: ModelHealth };
+    return body.data ?? null;
+  } catch {
+    return null;
+  }
+}
