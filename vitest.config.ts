@@ -7,7 +7,7 @@ export default defineConfig({
     // the standalone scripts in tests/ (ai-sdk.test.ts, test-chat.mjs,
     // test-stream.mjs, test-guardrails.ts) which call process.exit() and
     // should not be run under vitest.
-    include: ['tests/{helpers,lib,mcp,tools}/**/*.test.ts'],
+    include: ['tests/{helpers,lib,mcp,services,tools}/**/*.test.ts'],
     testTimeout: 10_000,
   },
 });
