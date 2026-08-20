@@ -4,9 +4,31 @@ An AI chat assistant inside the Strapi v5 admin panel, and an MCP tool server th
 exposes the same tools to external AI clients through Strapi's official `/mcp`
 endpoint.
 
-Built on the [Vercel AI SDK](https://ai-sdk.dev/). Ships with two providers —
-Anthropic Claude and any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio) —
-and you can register your own.
+Built on the [Vercel AI SDK](https://ai-sdk.dev/).
+
+## Bring your own model
+
+The model is yours to choose, and nothing about the plugin assumes a vendor.
+Point it at Anthropic, at an open-weight model you run yourself, or at a
+provider you register in a few lines — the tools, permissions, and MCP surface
+are identical either way.
+
+- **Run open-source models locally.** Qwen, Gemma, Llama, Mistral, DeepSeek and
+  friends through Ollama, llama-swap, vLLM or LM Studio. Your content, the
+  model, and every tool result stay on your machine — nothing reaches an API.
+- **Or self-host them on your own cloud hardware.** Same configuration, just a
+  different `baseURL`. No model vendor is involved.
+- **Or use a hosted endpoint** — Anthropic, or an inference vendor serving open
+  weights.
+- **Or register a provider of your own**, if none of the above fits.
+
+That last point matters for CMS content in particular: a Strapi instance holds
+unpublished drafts, customer records and internal documents, and this plugin
+hands a model tools that read and write them. Being able to keep all of that
+inside your own network is the difference between "we can use this" and "legal
+said no".
+
+See [Providers](#providers) for working configuration for each.
 
 The plugin has exactly two surfaces:
 
@@ -22,6 +44,7 @@ built-in MCP server at boot.
 
 ## Contents
 
+- [Bring your own model](#bring-your-own-model)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Configuration reference](#configuration-reference)
@@ -373,6 +396,11 @@ AIProvider.registerProvider('mistral', ({ apiKey, baseURL }) => {
 
 Then set `provider: 'mistral'` in config. Registration is resolved lazily on
 first use, so ordering relative to this plugin's own bootstrap does not matter.
+
+Any [AI SDK provider](https://ai-sdk.dev/providers/ai-sdk-providers) works this
+way — OpenAI, Google, Mistral, Bedrock, Azure, Cohere, or a community one. The
+two built-ins are not special: they are registered with this same call during
+the plugin's own bootstrap, so there is nothing you cannot replace.
 
 ---
 
