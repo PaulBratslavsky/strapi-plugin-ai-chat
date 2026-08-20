@@ -4,7 +4,7 @@ import { z } from 'zod';
 export const listContentTypesSchema = z.object({});
 
 export const listContentTypesDescription =
-  'List all Strapi content types and components with their fields, relations, and structure. This is the starting point for any content operation — call it first to discover content type UIDs (e.g. "api::article.article"), field names, relation targets, and components. No parameters required. Results are cached.';
+  'List all Strapi content types and components with their fields, relations, and structure. This is the starting point for any content operation — call it first to discover content type UIDs (e.g. "api::article.article"), field names, relation targets, and components. Each field reports its type and any constraints it carries (required, maxLength, minLength, enum, default) - respect them when writing, since a violation is rejected. No parameters required. Results are cached.';
 
 export interface RelationSummary {
   field: string;
@@ -13,11 +13,33 @@ export interface RelationSummary {
   targetDisplayName: string;
 }
 
+/**
+ * One field, with the constraints a model has to respect in order to write it.
+ *
+ * Names alone were not enough. A model told only that `description` exists will
+ * send 90 characters to a field capped at 80, and the only feedback is a
+ * rejected write it then has to guess its way out of. Strong models absorb that
+ * round trip; smaller ones spend their one attempt on it and either give up or
+ * report a save that never happened.
+ *
+ * Every property past `name` and `type` is omitted when the attribute does not
+ * set it, so the common field costs two keys rather than eight.
+ */
+export interface FieldSummary {
+  name: string;
+  type: string;
+  required?: boolean;
+  maxLength?: number;
+  minLength?: number;
+  enum?: string[];
+  default?: unknown;
+}
+
 export interface ContentTypeSummary {
   uid: string;
   kind: 'collectionType' | 'singleType';
   displayName: string;
-  fields: string[];
+  fields: FieldSummary[];
   relations: RelationSummary[];
   components: string[];
 }
@@ -27,6 +49,7 @@ export interface ComponentSummary {
   category: string;
   displayName: string;
   fieldCount: number;
+  fields: FieldSummary[];
 }
 
 export interface ListContentTypesResult {
@@ -88,20 +111,34 @@ function collectComponents(attr: Record<string, unknown>): string[] {
   return [];
 }
 
+/** Read the constraints Strapi records on an attribute, skipping the unset. */
+function summarizeField(name: string, attrDef: unknown): FieldSummary {
+  const attr = (attrDef ?? {}) as Record<string, unknown>;
+  const summary: FieldSummary = { name, type: (attr.type as string) ?? 'unknown' };
+
+  if (attr.required === true) summary.required = true;
+  if (typeof attr.maxLength === 'number') summary.maxLength = attr.maxLength;
+  if (typeof attr.minLength === 'number') summary.minLength = attr.minLength;
+  if (Array.isArray(attr.enum)) summary.enum = attr.enum as string[];
+  if (attr.default !== undefined) summary.default = attr.default;
+
+  return summary;
+}
+
 function parseContentType(
   uid: string,
   contentType: unknown,
   allContentTypes: object
 ): ContentTypeSummary {
   const ct = contentType as StrapiContentType;
-  const fields: string[] = [];
+  const fields: FieldSummary[] = [];
   const relations: RelationSummary[] = [];
   const usedComponents = new Set<string>();
 
   for (const [attrName, attrDef] of Object.entries(ct.attributes || {})) {
     if (INTERNAL_FIELDS.has(attrName)) continue;
 
-    fields.push(attrName);
+    fields.push(summarizeField(attrName, attrDef));
 
     const relation = extractRelation(attrName, attrDef, allContentTypes);
     if (relation) relations.push(relation);
@@ -128,6 +165,7 @@ function parseComponent(uid: string, component: unknown): ComponentSummary {
     category: comp.category || 'default',
     displayName: comp.info?.displayName || uid,
     fieldCount: Object.keys(comp.attributes || {}).length,
+    fields: Object.entries(comp.attributes || {}).map(([n, d]) => summarizeField(n, d)),
   };
 }
 

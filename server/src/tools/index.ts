@@ -47,13 +47,50 @@ export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet
     tools[name] = tool({
       description: def.description,
       inputSchema: zodSchema(def.schema) as any,
-      execute: async (args: any) => def.execute(args, strapi, context),
+      execute: async (args: any) => {
+        try {
+          return await def.execute(args, strapi, context);
+        } catch (error) {
+          // Rethrown rather than returned: the SDK marks the step a tool
+          // error, which is what lets the model try again on the next step.
+          throw new Error(describeToolFailure(error));
+        }
+      },
     });
   }
 
   return tools;
 }
 
+
+/**
+ * Turn a thrown error into something the model can act on.
+ *
+ * Strapi's ValidationError summarises to "3 errors occurred" and keeps the
+ * per-field causes in `details.errors`, which the AI SDK never sees because it
+ * serialises the error by its message alone. A model handed that count knows
+ * only that the write failed, so its retry is another guess - and a model that
+ * runs out of guesses tends to claim the save succeeded rather than admit it
+ * could not do it.
+ *
+ * Flattening the details into the message is what makes the second attempt
+ * differ from the first.
+ */
+export function describeToolFailure(error: unknown): string {
+  const err = error as any;
+  const base = err?.message ?? String(error);
+  const details = err?.details?.errors ?? err?.error?.details?.errors;
+
+  if (!Array.isArray(details) || details.length === 0) return base;
+
+  const lines = details.map((d: any) => {
+    const path = Array.isArray(d?.path) ? d.path.join('.') : d?.path;
+    const message = d?.message ?? 'invalid';
+    return path ? `${path}: ${message}` : message;
+  });
+
+  return `${base} - ${lines.join('; ')}`;
+}
 
 /**
  * Build a system prompt section describing all available tools.
