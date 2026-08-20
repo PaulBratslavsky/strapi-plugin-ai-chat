@@ -1,97 +1,35 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useEffect, useMemo, useCallback } from 'react';
+import { useChat as useSdkChat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
+import type { UIMessage } from 'ai';
 import { PLUGIN_ID } from '../pluginId';
 import { getToken, getBackendURL } from '../utils/auth';
-import { readSSEStream } from '../utils/sse';
 
-export interface ToolCall {
+/**
+ * Chat state, backed by the AI SDK.
+ *
+ * The server streams `toUIMessageStreamResponse()` and conversations are
+ * persisted as `UIMessage`, so this hook no longer translates between formats —
+ * it configures a transport and passes the SDK's own state through.
+ *
+ * What it replaced hand-parsed three event types (`text-delta`,
+ * `tool-input-available`, `tool-output-available`) and silently discarded the
+ * rest. `error` was among them, which is why a failed stream surfaced as
+ * "No response received." rather than the provider's actual complaint.
+ */
+
+/** A tool invocation, as the SDK represents it inside `parts`. */
+export interface ToolPart {
+  type: string;
   toolCallId: string;
-  toolName: string;
-  input: unknown;
+  toolName?: string;
+  state?: string;
+  input?: unknown;
   output?: unknown;
+  errorText?: string;
 }
 
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  toolCalls?: ToolCall[];
-}
-
-type SetMessages = React.Dispatch<React.SetStateAction<Message[]>>;
-
-function generateId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-}
-
-function toUIMessages(messages: Message[]) {
-  return messages.map((message) => {
-    const parts: Array<Record<string, unknown>> = [];
-
-    if (message.content) {
-      parts.push({ type: 'text', text: message.content });
-    }
-
-    if (message.toolCalls) {
-      for (const tc of message.toolCalls) {
-        parts.push({
-          type: `tool-${tc.toolName}`,
-          toolCallId: tc.toolCallId,
-          toolName: tc.toolName,
-          state: tc.output !== undefined ? 'output-available' : 'input-available',
-          input: tc.input,
-          ...(tc.output !== undefined ? { output: tc.output } : {}),
-        });
-      }
-    }
-
-    return { id: message.id, role: message.role, parts };
-  });
-}
-
-async function fetchChatStream(messages: Message[], enabledToolSources?: string[]): Promise<ReadableStreamDefaultReader<Uint8Array>> {
-  const token = getToken();
-  const body: Record<string, unknown> = { messages: toUIMessages(messages) };
-  if (enabledToolSources) body.enabledToolSources = enabledToolSources;
-
-  const response = await fetch(`${getBackendURL()}/${PLUGIN_ID}/chat`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
-
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error('No response stream');
-  return reader;
-}
-
-function updateMessage(setMessages: SetMessages, id: string, updater: (m: Message) => Message) {
-  setMessages((prev) => prev.map((message) => (message.id === id ? updater(message) : message)));
-}
-
-function removeMessage(setMessages: SetMessages, id: string) {
-  setMessages((prev) => prev.filter((message) => message.id !== id));
-}
-
-function addToolCall(setMessages: SetMessages, assistantId: string, toolCallId: string, toolName: string, input: unknown) {
-  updateMessage(setMessages, assistantId, (message) => ({
-    ...message,
-    toolCalls: [...(message.toolCalls ?? []), { toolCallId, toolName, input }],
-  }));
-}
-
-function updateToolOutput(setMessages: SetMessages, assistantId: string, toolCallId: string, output: unknown) {
-  updateMessage(setMessages, assistantId, (message) => ({
-    ...message,
-    toolCalls: message.toolCalls?.map((tc) =>
-      tc.toolCallId === toolCallId ? { ...tc, output } : tc
-    ),
-  }));
-}
+export type Message = UIMessage;
 
 export interface UseChatOptions {
   initialMessages?: Message[];
@@ -100,66 +38,98 @@ export interface UseChatOptions {
   enabledToolSources?: string[];
 }
 
+/** All text in a message, in order, ignoring tool and other parts. */
+export function messageText(message: Message): string {
+  return (message.parts ?? [])
+    .filter((part: any) => part.type === 'text' && typeof part.text === 'string')
+    .map((part: any) => part.text)
+    .join('');
+}
+
+/** Tool invocations in a message, in the order the model made them. */
+export function messageToolParts(message: Message): ToolPart[] {
+  return (message.parts ?? []).filter((part: any) =>
+    typeof part.type === 'string' && part.type.startsWith('tool-'),
+  ) as ToolPart[];
+}
+
+/** The tool's name, whether or not the part carries it explicitly. */
+export function toolPartName(part: ToolPart): string {
+  return part.toolName ?? part.type.slice('tool-'.length);
+}
+
 export function useChat(options?: UseChatOptions) {
-  const [messages, setMessages] = useState<Message[]>(options?.initialMessages ?? []);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const conversationId = options?.conversationId;
+  const enabledToolSources = options?.enabledToolSources;
 
-  // Reset messages when conversation changes
-  useEffect(() => {
-    setMessages(options?.initialMessages ?? []);
-    setError(null);
-  }, [options?.conversationId]);
-
-  const sendMessage = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed || isLoading) return;
-
-      const userMessage: Message = { id: generateId(), role: 'user', content: trimmed };
-      const assistantId = generateId();
-
-      setMessages((prev) => [...prev, userMessage, { id: assistantId, role: 'assistant', content: '' }]);
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const reader = await fetchChatStream([...messages, userMessage], options?.enabledToolSources);
-
-        let streamStarted = false;
-        const result = await readSSEStream(reader, {
-          onTextDelta: (content) => {
-            if (!streamStarted) {
-              streamStarted = true;
-              options?.onStreamStart?.();
-            }
-            updateMessage(setMessages, assistantId, (message) => ({ ...message, content }));
-          },
-          onToolInput: (toolCallId, toolName, input) => {
-            addToolCall(setMessages, assistantId, toolCallId, toolName, input);
-          },
-          onToolOutput: (toolCallId, _toolName, output) => {
-            updateToolOutput(setMessages, assistantId, toolCallId, output);
-          },
-        });
-
-        if (!result) {
-          updateMessage(setMessages, assistantId, (message) => ({ ...message, content: message.content || 'No response received.' }));
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Something went wrong');
-        removeMessage(setMessages, assistantId);
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [isLoading, messages, options]
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: `${getBackendURL()}/${PLUGIN_ID}/chat`,
+        // Resolved per request rather than captured once. A token refreshed
+        // mid-session would otherwise start returning 401s that look like a
+        // server fault.
+        headers: (): Record<string, string> => {
+          const token = getToken();
+          return token ? { Authorization: `Bearer ${token}` } : {};
+        },
+        body: () => (enabledToolSources ? { enabledToolSources } : {}),
+      }),
+    [enabledToolSources],
   );
 
-  const clearMessages = useCallback(() => {
-    setMessages([]);
-    setError(null);
-  }, []);
+  const chat = useSdkChat({
+    transport,
+    // Recreates the underlying Chat when the conversation changes, so a
+    // switch does not append to the previous conversation's messages.
+    id: conversationId ?? 'new',
+  });
 
-  return { messages, setMessages, sendMessage, clearMessages, isLoading, error };
+  const { messages, setMessages, sendMessage: sdkSendMessage, status, error } = chat as any;
+
+  // Seed explicitly rather than through the `messages` option.
+  //
+  // Conversations arrive asynchronously: the first render has none, and the
+  // fetch resolves later. The SDK only reads its `messages` option when it
+  // constructs a Chat, so history that arrives after that point is never
+  // adopted — the panel rendered the right number of empty bubbles because the
+  // messages existed but carried no parts.
+  const initialMessages = options?.initialMessages;
+  useEffect(() => {
+    if (initialMessages && initialMessages.length > 0) {
+      setMessages(initialMessages);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, initialMessages]);
+
+  const isLoading = status === 'submitted' || status === 'streaming';
+
+  useEffect(() => {
+    if (status === 'streaming') options?.onStreamStart?.();
+    // onStreamStart is intentionally not a dependency: callers pass an inline
+    // function, which would re-fire this on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  const sendMessage = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || isLoading) return;
+      sdkSendMessage({ text: trimmed });
+    },
+    [isLoading, sdkSendMessage],
+  );
+
+  const clearMessages = useCallback(() => setMessages([]), [setMessages]);
+
+  return {
+    messages: messages as Message[],
+    setMessages,
+    sendMessage,
+    clearMessages,
+    isLoading,
+    // The SDK surfaces a real Error here — including the provider's own
+    // message, which the previous implementation dropped on the floor.
+    error: error ? (error.message ?? String(error)) : null,
+  };
 }

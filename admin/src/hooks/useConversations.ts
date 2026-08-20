@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Message } from './useChat';
+import { messageText } from './useChat';
 import {
   fetchConversations,
   fetchConversation,
@@ -23,7 +24,7 @@ export function useConversations() {
           const most_recent = list[0];
           const conversation = await fetchConversation(most_recent.documentId);
           setActiveId(most_recent.documentId);
-          setInitialMessages((conversation.messages as Message[]) || []);
+          setInitialMessages((conversation.messages as Message[]) ?? []);
         }
       })
       .catch((err) => console.error('Failed to load conversations:', err));
@@ -33,7 +34,7 @@ export function useConversations() {
     try {
       const conversation = await fetchConversation(documentId);
       setActiveId(documentId);
-      setInitialMessages((conversation.messages as Message[]) || []);
+      setInitialMessages((conversation.messages as Message[]) ?? []);
     } catch (err) {
       console.error('Failed to load conversation:', err);
     }
@@ -49,8 +50,9 @@ export function useConversations() {
       if (messages.length === 0) return;
 
       const firstUserMsg = messages.find((m) => m.role === 'user');
-      const title = firstUserMsg
-        ? firstUserMsg.content.slice(0, 80) + (firstUserMsg.content.length > 80 ? '…' : '')
+      const firstText = firstUserMsg ? messageText(firstUserMsg) : '';
+      const title = firstText
+        ? firstText.slice(0, 80) + (firstText.length > 80 ? '…' : '')
         : 'New conversation';
 
       try {

@@ -86,3 +86,41 @@ describe('createTools RBAC filtering', () => {
     expect(Object.keys(tools)).toEqual(['searchContent']);
   });
 });
+
+describe('internal tools are not gated by RBAC', () => {
+  // Internal tools are chat-only and never reach MCP, so buildMcpActionDefs()
+  // (which walks getPublic()) never registers an action for them. Filtering
+  // them by ability therefore withholds them from everyone, including a Super
+  // Admin, since the action they would need does not exist to be granted.
+  const internalTool = {
+    name: 'saveMemory',
+    description: 'Save a memory',
+    schema: z.object({ content: z.string() }),
+    execute: async () => ({ ok: true }),
+    internal: true,
+  };
+
+  it('offers an internal tool to a caller granted nothing', () => {
+    const strapi = strapiWith(internalTool, createTool);
+
+    const tools = createTools(strapi, { ability: abilityAllowing() });
+
+    expect(Object.keys(tools)).toEqual(['saveMemory']);
+  });
+
+  it('still gates public tools for that same caller', () => {
+    const strapi = strapiWith(internalTool, createTool);
+
+    const tools = createTools(strapi, { ability: abilityAllowing() });
+
+    expect(Object.keys(tools)).not.toContain('createContent');
+  });
+
+  it('keeps internal tools alongside granted public ones', () => {
+    const strapi = strapiWith(internalTool, searchTool);
+
+    const tools = createTools(strapi, { ability: abilityAllowing(actionForTool('searchContent')) });
+
+    expect(Object.keys(tools).sort()).toEqual(['saveMemory', 'searchContent']);
+  });
+});

@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
-import type { ToolCall } from '../hooks/useChat';
+import type { ToolPart } from '../hooks/useChat';
+
+/** A tool part with `toolName` guaranteed by the caller. */
+type ToolCall = ToolPart & { toolName: string };
 import { TaskConfirmCard } from './TaskConfirmCard';
 
 // --- Helpers ---
