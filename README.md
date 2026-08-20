@@ -176,7 +176,8 @@ Rough guidance from testing this plugin:
 |---|---|
 | Under 7B | Will not reliably call tools at all |
 | 8B or so | Calls one tool, then tends to narrate the rest instead of doing it |
-| 26B to 35B | Handles short tool chains, still struggles with multi step writes |
+| 14B | The first tier that completed a multi step write here, with `qwen3:14b` |
+| 26B to 35B | Varies by model family more than by size |
 | Frontier (Claude, and similar) | Handles the full chain and recovers from its own mistakes |
 
 **Watch the context window, not just the model.** This is the trap that costs
@@ -214,14 +215,17 @@ matrix:
 | Model | Served by | Result on a transcript to article task |
 |---|---|---|
 | `claude-sonnet-5` | Anthropic | Completes it, recovers from failed writes. The default |
+| `qwen3:14b` | Ollama | Completes it, recovers from a failed write. Best local result |
 | `qwen3.6-35b` | llama-swap on a LAN box | Short tool chains work, needs generous output headroom |
 | `gemma4:26b` | Ollama | Reads and searches, did not complete the write |
 | `gemma4-kb` (8B) | Ollama | Fetches, then describes the save instead of doing it |
 | `llama3.2:3b` | Ollama | Does not call the tools |
 
-If you want everything on your own hardware, that works, and it works best for
-reading, searching and summarising. For unattended multi step writing, use a
-frontier model or expect to supervise the result.
+If you want everything on your own hardware, that works. `qwen3:14b` with a
+32k window completed the same transcript to article task as the frontier model,
+including correcting a rejected write on its second attempt. Note that model
+family matters more than parameter count: a 26B model failed the task that this
+14B one passed.
 
 Two more things that surprise people:
 
