@@ -166,6 +166,18 @@ export class AIProvider {
       model: this.getLanguageModel(input.modelId),
       system: input.system,
       ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+      // Same reasoning as temperature: sent only when asked for. Sampling
+      // parameters are model-specific — Qwen documents temperature 1 / topP
+      // 0.95 / topK 20, while other models reject or ignore them — so the
+      // plugin carries no defaults and lets each model apply its own.
+      ...(input.topP !== undefined ? { topP: input.topP } : {}),
+      ...(input.topK !== undefined ? { topK: input.topK } : {}),
+      ...(input.frequencyPenalty !== undefined ? { frequencyPenalty: input.frequencyPenalty } : {}),
+      ...(input.presencePenalty !== undefined ? { presencePenalty: input.presencePenalty } : {}),
+      ...(input.seed !== undefined ? { seed: input.seed } : {}),
+      // Escape hatch for anything provider-specific the SDK exposes but this
+      // config does not name, e.g. { openaiCompatible: { ... } }.
+      ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
       maxOutputTokens: input.maxOutputTokens,
       tools: input.tools,
       stopWhen: input.stopWhen,

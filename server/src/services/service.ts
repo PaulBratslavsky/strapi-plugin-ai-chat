@@ -105,6 +105,11 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
         system,
         tools,
         maxOutputTokens,
+        // Only forwarded when configured. Each is omitted entirely otherwise,
+        // so models that reject a parameter never see it.
+        ...(config?.temperature !== undefined ? { temperature: config.temperature } : {}),
+        ...(config?.topP !== undefined ? { topP: config.topP } : {}),
+        ...(config?.topK !== undefined ? { topK: config.topK } : {}),
         stopWhen: stepCountIs(maxSteps),
       });
     },
