@@ -82,6 +82,12 @@ export interface GenerateOptions {
   maxOutputTokens?: number;
   tools?: ToolSet;
   stopWhen?: AnyStopCondition;
+  /**
+   * Per-step override hook. Used to withdraw a mutating tool once it has
+   * succeeded, so the model cannot call it again. See
+   * lib/close-tools-after-write.ts.
+   */
+  prepareStep?: (options: any) => any;
   /** Max tool call round-trips before stopping */
   maxSteps?: number;
   /** Override model for this request (e.g. use Haiku for public chat) */

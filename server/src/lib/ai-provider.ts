@@ -181,6 +181,7 @@ export class AIProvider {
       maxOutputTokens: input.maxOutputTokens,
       tools: input.tools,
       stopWhen: input.stopWhen,
+      ...(input.prepareStep !== undefined ? { prepareStep: input.prepareStep } : {}),
     };
 
     return isPromptInput(input)
