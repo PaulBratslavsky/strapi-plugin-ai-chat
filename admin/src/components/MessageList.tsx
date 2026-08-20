@@ -46,6 +46,20 @@ const SparkleIcon = styled.div`
   }
 `;
 
+const EmptyReplyNote = styled.div`
+  font-size: 13px;
+  color: #666687;
+  font-style: italic;
+  line-height: 1.5;
+
+  code {
+    font-style: normal;
+    background: #eaeaef;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+`;
+
 const MessageBubble = styled.div<{ $isUser: boolean }>`
   min-width: 0;
   background-color: ${({ $isUser }) => ($isUser ? '#4945ff' : '#f6f6f9')};
@@ -252,6 +266,19 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(
                 )}
                 {message.role === 'assistant' && !displayContent && isLoading && (
                   <TypingDots><span /><span /><span /></TypingDots>
+                )}
+                {/*
+                  A finished assistant turn with tool calls but no text. The model
+                  used its tools and stopped without writing a reply, usually by
+                  exhausting `maxSteps` mid-loop. Rendering nothing leaves an empty
+                  bubble and no way to tell that from a silent failure.
+                */}
+                {message.role === 'assistant' && !displayContent && !isLoading && toolParts.length > 0 && (
+                  <EmptyReplyNote>
+                    The model used its tools but stopped without writing a reply.
+                    It likely hit the step limit; raising <code>maxSteps</code> or{' '}
+                    <code>maxOutputTokens</code> usually resolves it.
+                  </EmptyReplyNote>
                 )}
                 {toolParts
                   .filter((part) => !HIDDEN_TOOLS.has(part.toolName))
