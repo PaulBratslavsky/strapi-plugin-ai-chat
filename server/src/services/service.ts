@@ -13,6 +13,7 @@ import {
   DEFAULT_MODEL,
 } from '../lib/types';
 import { createTools, describeTools } from '../tools';
+import { closeToolsAfterWrite } from '../lib/close-tools-after-write';
 import type { CallerAbility } from '../lib/tool-registry';
 import { trimMessages } from '../lib/trim-messages';
 
@@ -134,6 +135,11 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
         ...(config?.temperature !== undefined ? { temperature: config.temperature } : {}),
         ...(config?.topP !== undefined ? { topP: config.topP } : {}),
         ...(config?.topK !== undefined ? { topK: config.topK } : {}),
+        // Withdraw a mutating tool once it has succeeded, so the model writes
+        // its summary instead of calling the tool again.
+        ...(plugin.toolRegistry
+          ? { prepareStep: closeToolsAfterWrite(plugin.toolRegistry, tools) }
+          : {}),
         stopWhen: stepCountIs(maxSteps),
       });
     },
