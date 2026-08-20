@@ -80,6 +80,82 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
     ctx.body = { data: { provider, model, baseURL: baseURL ?? null, isLocal } };
   },
 
+  /**
+   * Is the configured model actually reachable?
+   *
+   * A model that has gone away produces a stream that opens with 200 and then
+   * dies, which the panel had no way to distinguish from a slow answer. The
+   * header can now say so before a message is sent, rather than leaving the
+   * user to guess why nothing came back.
+   *
+   * The check is deliberately cheap. For OpenAI-compatible endpoints that is
+   * GET /models, which costs nothing and needs no tokens. Anthropic has no
+   * comparable free probe, so a configured key is reported as `unknown` rather
+   * than spending money to turn the badge green.
+   */
+  async getModelHealth(ctx: Context) {
+    const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
+    const provider = config?.provider ?? 'anthropic';
+    const baseURL = config?.baseURL;
+    const model = config?.chatModel ?? DEFAULT_MODEL;
+
+    const respond = (status: string, detail?: string) => {
+      ctx.body = { data: { status, detail: detail ?? null, provider, model, checkedAt: new Date().toISOString() } };
+    };
+
+    if (provider !== 'openai-compatible') {
+      const hasKey = Boolean(config?.apiKey || config?.anthropicApiKey);
+      respond(hasKey ? 'unknown' : 'unconfigured', hasKey ? 'No free probe for this provider' : 'No API key configured');
+      return;
+    }
+
+    if (!baseURL) {
+      respond('unconfigured', 'openai-compatible requires a baseURL');
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const headers: Record<string, string> = {};
+      const key = config?.apiKey;
+      if (key) headers.Authorization = `Bearer ${key}`;
+
+      const res = await fetch(`${baseURL.replace(/\/$/, '')}/models`, {
+        headers,
+        signal: controller.signal,
+      });
+
+      if (res.ok) {
+        // Confirm the configured model is actually served, not just that
+        // something answered. A renamed or unloaded model is the more common
+        // failure once an endpoint is up.
+        let served: string[] = [];
+        try {
+          const body = (await res.json()) as { data?: Array<{ id?: string }> };
+          served = (body?.data ?? []).map((m) => m.id).filter(Boolean) as string[];
+        } catch {
+          // endpoint answered but not in the documented shape; treat as up
+        }
+        if (served.length > 0 && !served.includes(model)) {
+          respond('model-missing', `Endpoint is up but does not serve "${model}". Available: ${served.slice(0, 6).join(', ')}`);
+          return;
+        }
+        respond('ok');
+        return;
+      }
+
+      respond(res.status === 401 || res.status === 403 ? 'unauthorized' : 'down', `Endpoint returned ${res.status}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const isTimeout = /abort/i.test(message);
+      respond('down', isTimeout ? 'Timed out after 5s' : message.slice(0, 160));
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
   async getToolSources(ctx: Context) {
     const plugin = strapi.plugin('ai-sdk') as unknown as PluginInstance;
     const registry = plugin.toolRegistry;
