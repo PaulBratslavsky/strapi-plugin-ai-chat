@@ -1,10 +1,17 @@
 import type { Core } from '@strapi/strapi';
 import { z } from 'zod';
 
-export const listContentTypesSchema = z.object({});
+export const listContentTypesSchema = z.object({
+  contentType: z
+    .string()
+    .optional()
+    .describe(
+      'Optional UID (e.g. "api::article.article"). When given, only that content type and the components it actually uses are returned, which is a fraction of the full listing. Pass it once the target is known.',
+    ),
+});
 
 export const listContentTypesDescription =
-  'List all Strapi content types and components with their fields, relations, and structure. This is the starting point for any content operation — call it first to discover content type UIDs (e.g. "api::article.article"), field names, relation targets, and components. Each field reports its type and any constraints it carries (required, maxLength, minLength, enum, default) - respect them when writing, since a violation is rejected. No parameters required. Results are cached.';
+  'List Strapi content types and components with their fields, relations, and structure. This is the starting point for any content operation - call it first to discover content type UIDs (e.g. "api::article.article"), field names, relation targets, and components. Each field reports its type and any constraints it carries (required, maxLength, minLength, enum, default) - respect them when writing, since a violation is rejected. Pass contentType to get just one type and the components it uses, which is much smaller than the full listing. Results are cached.';
 
 export interface RelationSummary {
   field: string;
@@ -172,23 +179,47 @@ function parseComponent(uid: string, component: unknown): ComponentSummary {
 // Cache — content types don't change at runtime so we compute once
 let cachedResult: ListContentTypesResult | null = null;
 
+/** Clears the module-level cache. Exists for tests, which build their own schemas. */
+export function __resetContentTypeCache(): void {
+  cachedResult = null;
+}
+
 /**
  * Core logic for listing content types and components.
  * Shared between AI SDK tool and MCP tool.
  * Results are cached since content types are static after server startup.
  */
-export async function listContentTypes(strapi: Core.Strapi): Promise<ListContentTypesResult> {
-  if (cachedResult) return cachedResult;
+export async function listContentTypes(
+  strapi: Core.Strapi,
+  params?: { contentType?: string },
+): Promise<ListContentTypesResult> {
+  if (!cachedResult) {
+    const contentTypes = Object.entries(strapi.contentTypes)
+      .filter(([uid]) => isApiContentType(uid))
+      .map(([uid, ct]) => parseContentType(uid, ct, strapi.contentTypes))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-  const contentTypes = Object.entries(strapi.contentTypes)
-    .filter(([uid]) => isApiContentType(uid))
-    .map(([uid, ct]) => parseContentType(uid, ct, strapi.contentTypes))
-    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+    const components = Object.entries(strapi.components)
+      .map(([uid, comp]) => parseComponent(uid, comp))
+      .sort((a, b) => a.category.localeCompare(b.category) || a.displayName.localeCompare(b.displayName));
 
-  const components = Object.entries(strapi.components)
-    .map(([uid, comp]) => parseComponent(uid, comp))
-    .sort((a, b) => a.category.localeCompare(b.category) || a.displayName.localeCompare(b.displayName));
+    cachedResult = { contentTypes, components };
+  }
 
-  cachedResult = { contentTypes, components };
-  return cachedResult;
+  // Narrowing is the point of the parameter, not a nicety. The full listing
+  // runs to several thousand tokens, and a model working inside a small context
+  // window spends them here instead of on the transcript it was asked to
+  // summarise. Once the target UID is known the rest of the catalogue is dead
+  // weight, so return that type and only the components it actually uses.
+  const wanted = params?.contentType;
+  if (!wanted) return cachedResult;
+
+  const match = cachedResult.contentTypes.find((c) => c.uid === wanted);
+  if (!match) return cachedResult;
+
+  const used = new Set(match.components);
+  return {
+    contentTypes: [match],
+    components: cachedResult.components.filter((c) => used.has(c.uid)),
+  };
 }
