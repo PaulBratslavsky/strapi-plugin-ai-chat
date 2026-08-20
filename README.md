@@ -32,7 +32,6 @@ built-in MCP server at boot.
 - [Memory, shared memory, notes and tasks](#memory-shared-memory-notes-and-tasks)
 - [Guardrails](#guardrails)
 - [Extending with custom tools](#extending-with-custom-tools)
-- [Bring your own provider](#bring-your-own-provider)
 - [Upgrading from 1.x](#upgrading-from-1x)
 - [Testing](#testing)
 - [Documentation](#documentation)
@@ -151,6 +150,9 @@ Everything under `config` in `config/plugins.ts`:
 | `provider` | `string` | `'anthropic'` | `'anthropic'`, `'openai-compatible'`, or a name you registered yourself. |
 | `chatModel` | `string` | `'claude-sonnet-5'` | Any model id the provider accepts. Not an allow-list. |
 | `baseURL` | `string` | — | Provider endpoint override. **Required** when `provider` is `'openai-compatible'`. |
+| `temperature` | `number` | — | Omitted unless set. Anthropic's newer models reject it. |
+| `topP` | `number` | — | Omitted unless set. |
+| `topK` | `number` | — | Omitted unless set. Not forwarded by `openai-compatible`. |
 | `systemPrompt` | `string` | built-in prompt | Replaces the default preamble. A `{tools}` placeholder is substituted with the tool list; without it, the tool list is appended. |
 | `maxOutputTokens` | `number` | `8192` | Cap on model output per response. |
 | `maxConversationMessages` | `number` | `15` | History is trimmed to this many messages, keeping tool-call/result pairs intact. |
@@ -176,7 +178,17 @@ and `baseURL` must be strings, and `openai-compatible` without a `baseURL` throw
 
 ## Providers
 
-### Anthropic (default)
+The plugin talks to three kinds of model through the same two providers. Which
+you pick changes where your content goes, not how anything else works — the
+tools, permissions, and MCP surface are identical.
+
+| | Provider | Where inference happens | Content leaves your network |
+|---|---|---|---|
+| **Frontier** | `anthropic` | Anthropic's API | yes |
+| **Hosted OpenAI-compatible** | `openai-compatible` | a vendor's endpoint | yes |
+| **Local / self-hosted** | `openai-compatible` | your machine or LAN | **no** |
+
+### Frontier: Anthropic
 
 ```typescript
 // config/plugins.ts
@@ -184,7 +196,6 @@ export default ({ env }) => ({
   'ai-sdk': {
     enabled: true,
     config: {
-      provider: 'anthropic',
       apiKey: env('ANTHROPIC_API_KEY'),
       chatModel: env('ANTHROPIC_MODEL', 'claude-sonnet-5'),
     },
@@ -192,46 +203,110 @@ export default ({ env }) => ({
 });
 ```
 
-Model ids verified against the Anthropic API: `claude-sonnet-5`, `claude-opus-5`,
-`claude-fable-5`, `claude-haiku-4-5-20251001`. Undated aliases are preferred —
-dated snapshots get retired and silently break the default.
+`provider` defaults to `anthropic`, so it can be omitted.
 
-### Ollama and other OpenAI-compatible endpoints
+Do **not** set `temperature` here. Anthropic's newer models reject it outright
+with *"`temperature` is deprecated for this model"*, which fails every request.
+The plugin omits sampling parameters unless you set them, so leaving them alone
+is the working configuration.
 
-`openai-compatible` covers Ollama, vLLM, LM Studio, LocalAI, and any hosted API
-that speaks the OpenAI wire format. `baseURL` is required.
+### Local: Ollama, vLLM, LM Studio, llama-swap
+
+Anything speaking the OpenAI wire format. `baseURL` is required; `apiKey` is
+not, since self-hosted runtimes generally have no auth.
 
 ```typescript
-// config/plugins.ts
+// config/plugins.ts — Ollama on the same machine
 export default ({ env }) => ({
   'ai-sdk': {
     enabled: true,
     config: {
       provider: 'openai-compatible',
-      baseURL: env('OLLAMA_BASE_URL', 'http://localhost:11434/v1'),
-      // No apiKey needed — Ollama has no auth. Pass one only if your
-      // endpoint requires it (some vLLM or LiteLLM deployments do).
-      chatModel: env('OLLAMA_MODEL', 'llama3.1:8b'),
+      baseURL: env('AI_BASE_URL', 'http://localhost:11434/v1'),
+      chatModel: env('AI_CHAT_MODEL', 'llama3.1:8b'),
     },
   },
 });
 ```
 
-`baseURL` is what this provider requires; `apiKey` is optional, since
-self-hosted runtimes generally have no auth. Omitting the baseURL disables the
-assistant with a message naming it.
+Nothing leaves the machine: the model, your content, and every tool result stay
+local. That is the point of this path — the same admin chat and the same tools,
+without sending CMS content to a hosted API.
 
-Nothing leaves the machine in this setup: the model, your content, and the tool
-results all stay local. That is the point of the provider — the same tools and
-the same admin chat, without sending your CMS content to a hosted API.
+A server on your network works the same way; give it the host and a key if it
+requires one:
 
-Pick a model that handles tool calling well; a model that cannot call tools
-reliably will describe what it would do instead of doing it. Verified working
-here: `llama3.1:8b`, `gemma3:27b`. Smaller models tend to break down on
-multi-step chains — search, read the result, then answer.
+```typescript
+provider: 'openai-compatible',
+baseURL: env('AI_BASE_URL', 'http://ai1.example.internal:9001/v1'),
+apiKey: env('AI1_API_KEY'),          // some gateways require one
+chatModel: env('AI_CHAT_MODEL', 'qwen3.6-35b'),
+temperature: 1,
+topP: 0.95,
+```
 
-The chat header shows the active model and marks inference as local when
-`baseURL` points at a loopback, `.local`, or private-range host.
+The chat header marks inference **LOCAL** when `baseURL` points at a loopback,
+`.local`, or private-range host.
+
+### Hosted OpenAI-compatible
+
+Same provider, a vendor's endpoint instead of yours — Together, Groq, Fireworks,
+OpenRouter, or an OpenAI-compatible gateway:
+
+```typescript
+provider: 'openai-compatible',
+baseURL: env('AI_BASE_URL', 'https://api.together.xyz/v1'),
+apiKey: env('AI_API_KEY'),
+chatModel: env('AI_CHAT_MODEL', 'Qwen/Qwen3-235B-A22B'),
+```
+
+### Choosing a model
+
+Tool calling is the requirement, not general fluency. This plugin's entire value
+is the model deciding to call `searchContent`, reading the result, and answering
+from it. A model that cannot call tools reliably will describe what it *would*
+do instead of doing it.
+
+Verified working here: `claude-sonnet-5`, `qwen3.6-35b`, `llama3.1:8b`.
+
+**Reasoning models need output headroom.** Qwen 3.6 spent 193 completion tokens
+reasoning before answering a one-word question; with `maxOutputTokens: 30` it
+returned nothing at all, because the budget was gone before it produced any
+visible text. The default of 8192 is comfortable — but if you lower it, short
+answers can come back empty.
+
+Expect them to be slower, too. A two-step tool loop against a local 35B took
+about 23 seconds end to end.
+
+### Sampling parameters
+
+All optional, all omitted unless set, because the right values are
+model-specific and a wrong one is often a hard failure rather than a nudge.
+
+| Option | Notes |
+|---|---|
+| `temperature` | Anthropic's newer models **reject** it. Qwen documents `1`. |
+| `topP` | Qwen documents `0.95`. |
+| `topK` | **Not forwarded by `openai-compatible`** — the OpenAI wire format has no `top_k`, so the SDK warns and drops it. Works with providers that support it. |
+| `frequencyPenalty`, `presencePenalty`, `seed` | Passed through when supported. |
+| `providerOptions` | Escape hatch for provider-specific fields the config does not name. |
+
+### Registering another provider
+
+Both built-ins are registered the same way any plugin can, in `bootstrap()`:
+
+```typescript
+import { AIProvider } from 'strapi-plugin-ai-sdk/server/lib/ai-provider';
+import { createMistral } from '@ai-sdk/mistral';
+
+AIProvider.registerProvider('mistral', ({ apiKey, baseURL }) => {
+  const provider = createMistral({ apiKey, baseURL });
+  return (modelId: string) => provider(modelId);
+});
+```
+
+Then set `provider: 'mistral'` in config. Registration is resolved lazily on
+first use, so ordering relative to this plugin's own bootstrap does not matter.
 
 ---
 
@@ -496,33 +571,6 @@ Things worth knowing:
 
 Full contract, including namespacing and naming rules:
 [`docs/plugin-contract.md`](./docs/plugin-contract.md).
-
-## Bring your own provider
-
-`anthropic` and `openai-compatible` cover most cases through config alone. For
-anything else, register a provider creator from your app and name it in
-`config.provider`:
-
-```typescript
-// src/index.ts
-export default {
-  register({ strapi }) {
-    strapi.plugin('ai-sdk').service('provider').register(
-      'my-model',
-      ({ apiKey, baseURL }) => {
-        const client = createMyClient({ apiKey, baseURL });
-        return (modelId: string) => client.languageModel(modelId);
-      }
-    );
-  },
-};
-```
-
-Providers resolve lazily on first model use, so registering from `register()` or
-`bootstrap()` both work — ordering against the plugin's own lifecycle does not
-matter.
-
----
 
 ## Upgrading from 1.x
 

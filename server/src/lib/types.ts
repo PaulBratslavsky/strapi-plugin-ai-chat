@@ -50,6 +50,10 @@ export interface PluginConfig {
   anthropicApiKey?: string;
   provider?: string;
   chatModel?: string;
+  /** Sampling parameters. Omit unless your model documents them. */
+  temperature?: number;
+  topP?: number;
+  topK?: number;
   baseURL?: string;
   systemPrompt?: string;
   maxOutputTokens?: number;
@@ -62,6 +66,19 @@ export interface PluginConfig {
 export interface GenerateOptions {
   system?: string;
   temperature?: number;
+  /** Nucleus sampling. Qwen documents 0.95; omit to use the model's default. */
+  topP?: number;
+  /** Top-k sampling. Qwen documents 20. Not every provider supports it. */
+  topK?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  /** Fixes sampling for reproducible output, where the provider supports it. */
+  seed?: number;
+  /**
+   * Provider-specific options passed straight to the AI SDK. Values must be
+   * JSON-serialisable; typed loosely because each provider defines its own.
+   */
+  providerOptions?: Record<string, Record<string, any>>;
   maxOutputTokens?: number;
   tools?: ToolSet;
   stopWhen?: AnyStopCondition;
