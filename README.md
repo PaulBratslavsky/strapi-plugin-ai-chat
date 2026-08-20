@@ -178,15 +178,60 @@ and `baseURL` must be strings, and `openai-compatible` without a `baseURL` throw
 
 ## Providers
 
-The plugin talks to three kinds of model through the same two providers. Which
-you pick changes where your content goes, not how anything else works — the
-tools, permissions, and MCP surface are identical.
+Two providers cover four deployment shapes. Which you pick changes where your
+content goes and who runs the hardware — not how anything else works. The tools,
+permissions, and MCP surface are identical in every case.
 
-| | Provider | Where inference happens | Content leaves your network |
+| Deployment | Provider | Whose model | Whose hardware | Content leaves your network |
+|---|---|---|---|---|
+| **Frontier API** | `anthropic` | Anthropic's | Anthropic's | yes |
+| **Hosted inference** | `openai-compatible` | open-weight | a vendor's | yes |
+| **Self-hosted on cloud** | `openai-compatible` | yours | your rented GPU | leaves the office, not your control |
+| **Local / LAN** | `openai-compatible` | yours | your machine | **no** |
+
+The middle two both use `openai-compatible` and differ only in the `baseURL`.
+Running Qwen on a GPU box you rent is the same configuration as running it on
+the machine under your desk — the plugin cannot tell them apart, and neither
+setup sends anything to a model vendor.
+
+### What runs well here
+
+Tool calling is the requirement, not general fluency. The plugin's value is the
+model choosing to call `searchContent`, reading the result, and answering from
+it. A model that cannot call tools reliably will describe what it *would* do.
+
+Verified working during development:
+
+| Model | Size | Served by | Notes |
 |---|---|---|---|
-| **Frontier** | `anthropic` | Anthropic's API | yes |
-| **Hosted OpenAI-compatible** | `openai-compatible` | a vendor's endpoint | yes |
-| **Local / self-hosted** | `openai-compatible` | your machine or LAN | **no** |
+| `claude-sonnet-5` | — | Anthropic API | Best tool use; the default |
+| `claude-haiku-4-5` | — | Anthropic API | Cheaper, fine for simple lookups |
+| `qwen3.6-35b` | 35B | llama-swap on a LAN box | Reasoning model. Two-step tool loop in ~23s |
+| `gemma4-kb` | ~9.6GB | Ollama, same machine | Completes full tool loops |
+| `llama3.1:8b` | 8B | Ollama, same machine | Workable; weaker on long chains |
+| `llama3.2:3b` | 3B | Ollama, same machine | Fast, unreliable past one or two tool steps |
+
+Other open-weight families that expose an OpenAI-compatible endpoint work the
+same way — Qwen, Gemma, Llama, Mistral, DeepSeek, Phi. The constraint is the
+serving layer, not the family.
+
+**Below roughly 7B, tool calling degrades sharply.** Small models tend to
+describe the tool call in prose instead of emitting one, which looks like the
+assistant ignoring you.
+
+### Serving layers that work
+
+Anything speaking the OpenAI chat-completions wire format:
+
+| | Typical use |
+|---|---|
+| **Ollama** | Simplest local setup, one machine |
+| **llama-swap** | Several models behind one endpoint, swaps on demand |
+| **vLLM** | Throughput serving, your own GPU or a rented one |
+| **LM Studio** | Desktop, GUI-managed |
+| **LocalAI**, **text-generation-webui** | General-purpose local servers |
+| **Together, Groq, Fireworks, OpenRouter, DeepInfra** | Hosted inference on open weights |
+| **LiteLLM** | Gateway in front of any of the above |
 
 ### Frontier: Anthropic
 
@@ -223,7 +268,7 @@ export default ({ env }) => ({
     config: {
       provider: 'openai-compatible',
       baseURL: env('AI_BASE_URL', 'http://localhost:11434/v1'),
-      chatModel: env('AI_CHAT_MODEL', 'llama3.1:8b'),
+      chatModel: env('AI_CHAT_MODEL', 'gemma3:27b'),   // or llama3.1:8b, qwen3:14b
     },
   },
 });
@@ -260,23 +305,44 @@ apiKey: env('AI_API_KEY'),
 chatModel: env('AI_CHAT_MODEL', 'Qwen/Qwen3-235B-A22B'),
 ```
 
-### Choosing a model
+The vendor runs the hardware and holds the weights. Your content reaches them,
+same as with a frontier API — the difference is the model is open-weight, not
+that the data stays private.
 
-Tool calling is the requirement, not general fluency. This plugin's entire value
-is the model deciding to call `searchContent`, reading the result, and answering
-from it. A model that cannot call tools reliably will describe what it *would*
-do instead of doing it.
+### Self-hosted on cloud hardware
 
-Verified working here: `claude-sonnet-5`, `qwen3.6-35b`, `llama3.1:8b`.
+Your own model on a GPU instance you rent. Configuration is identical to the
+local case; only the host differs:
 
-**Reasoning models need output headroom.** Qwen 3.6 spent 193 completion tokens
-reasoning before answering a one-word question; with `maxOutputTokens: 30` it
-returned nothing at all, because the budget was gone before it produced any
-visible text. The default of 8192 is comfortable — but if you lower it, short
-answers can come back empty.
+```typescript
+provider: 'openai-compatible',
+baseURL: env('AI_BASE_URL', 'https://inference.your-company.internal/v1'),
+apiKey: env('AI_API_KEY'),               // whatever your gateway requires
+chatModel: env('AI_CHAT_MODEL', 'qwen3.6-35b'),
+temperature: 1,
+topP: 0.95,
+```
 
-Expect them to be slower, too. A two-step tool loop against a local 35B took
-about 23 seconds end to end.
+No model vendor is involved: the weights are yours and the hardware is rented.
+Whether that counts as "private" is a question about your cloud provider and
+network, not about this plugin — but nothing is being sent to Anthropic, OpenAI,
+or an inference vendor.
+
+The chat header will not mark this **LOCAL**, because the host is not on a
+loopback or private range. That badge tracks the network location, not who owns
+the model.
+
+### Two things that surprise people
+
+**Reasoning models need output headroom.** `qwen3.6-35b` spent **193 completion
+tokens** reasoning before answering a one-word question. With
+`maxOutputTokens: 30` it returned *nothing at all* — the budget was gone before
+it produced any visible text, with no error to explain it. The 8192 default is
+comfortable; lowering it makes short answers vanish.
+
+**Expect local models to be slower.** A two-step tool loop against a 35B on a
+LAN box took about 23 seconds end to end. Frontier APIs answer the same prompt
+in a few seconds. That gap is the real cost of keeping content in-house.
 
 ### Sampling parameters
 
