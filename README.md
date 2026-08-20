@@ -546,6 +546,32 @@ published to npm.
 
 ---
 
+## Developing against a local Strapi
+
+Changes to the plugin's **admin** code need two builds, not one:
+
+```bash
+# in the plugin
+npm run build
+
+# in the host app — this is the step that is easy to miss
+npx strapi build
+npx strapi start
+```
+
+Strapi compiles plugin admin code into the host's own admin bundle. Rebuilding
+the plugin and restarting the server updates the backend but leaves the browser
+serving the previously built admin, so admin-side changes appear to have no
+effect — including changes that would otherwise be obvious, like a component
+that no longer exists still rendering.
+
+Server-side changes only need the plugin build and a restart.
+
+If something you just changed is not showing up, check whether the host's admin
+bundle is older than your plugin build before looking anywhere else.
+
+---
+
 ## Testing
 
 ```bash

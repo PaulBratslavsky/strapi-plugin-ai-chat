@@ -80,13 +80,27 @@ export function useChat(options?: UseChatOptions) {
 
   const chat = useSdkChat({
     transport,
-    // Remount on conversation change so the SDK reseeds from the newly loaded
-    // history instead of appending to the previous conversation's messages.
+    // Recreates the underlying Chat when the conversation changes, so a
+    // switch does not append to the previous conversation's messages.
     id: conversationId ?? 'new',
-    messages: options?.initialMessages ?? [],
   });
 
   const { messages, setMessages, sendMessage: sdkSendMessage, status, error } = chat as any;
+
+  // Seed explicitly rather than through the `messages` option.
+  //
+  // Conversations arrive asynchronously: the first render has none, and the
+  // fetch resolves later. The SDK only reads its `messages` option when it
+  // constructs a Chat, so history that arrives after that point is never
+  // adopted — the panel rendered the right number of empty bubbles because the
+  // messages existed but carried no parts.
+  const initialMessages = options?.initialMessages;
+  useEffect(() => {
+    if (initialMessages && initialMessages.length > 0) {
+      setMessages(initialMessages);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, initialMessages]);
 
   const isLoading = status === 'submitted' || status === 'streaming';
 
