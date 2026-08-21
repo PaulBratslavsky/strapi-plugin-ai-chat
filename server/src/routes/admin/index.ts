@@ -9,6 +9,12 @@ export default {
     },
     {
       method: 'GET',
+      path: '/context-info',
+      handler: 'controller.getContextInfo',
+      config: { policies: [] },
+    },
+    {
+      method: 'GET',
       path: '/model-info',
       handler: 'controller.getModelInfo',
       config: { policies: [] },

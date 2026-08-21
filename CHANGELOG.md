@@ -3,6 +3,35 @@
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
 
+## 2.5.0 - 2026-08-21
+
+Shows how much of the model's context window a conversation is using, in the
+chat toolbar.
+
+This is the diagnostic that would have shortened the investigation behind
+2.4.0. The plugin sends its system prompt and every tool's JSON schema before
+the user's question, measured at about 6,700 tokens on a real install. Ollama
+serves a 4,096 token window unless the model file sets `num_ctx`, so a model
+advertising 262,144 tokens of context can be quietly truncated to less than the
+preamble needs. Nothing reports an error. The model hangs, or answers while
+ignoring its tools, and the obvious conclusion is that tool calling is broken.
+
+- New `GET /context-info` reports the system prompt and tool schema cost, the
+  window actually in force, and what the weights support when the two differ.
+  Measured for the calling admin, since the tool set is filtered by their role
+  and the admin with more tools is the one closer to the edge.
+- The window is read from a running Ollama instance first, then the model file,
+  then Ollama's default, which is the case worth catching. An explicit
+  `contextWindow` config option overrides all of it.
+- The chat toolbar shows used against available, turning amber past 60 percent
+  and red past 90, with a second badge when the preamble cannot fit at all.
+- Token usage is attached to each assistant message, so the figure reflects the
+  conversation rather than only the starting cost.
+
+Counts are estimated from text length rather than a real tokenizer, which is
+enough to say whether you are near the edge without adding a tokenizer per
+provider.
+
 ## 2.4.0 - 2026-08-20 (`faa3ff0`)
 
 Tool calling was reported as broken: a local model fetched a transcript,

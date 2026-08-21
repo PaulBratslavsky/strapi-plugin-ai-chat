@@ -7,6 +7,15 @@ import type { PluginConfig, PluginInstance } from '../lib/types';
 import { DEFAULT_MODEL } from '../lib/types';
 import { getService, validateBody, validateChatBody, createSSEStream, writeSSE } from '../lib/utils';
 import { actionForTool } from '../lib/tool-permissions';
+import { isServed } from '../lib/model-tag';
+import {
+  detectContextWindow,
+  measureTools,
+  estimateTokens,
+  warnAboutBudget,
+  type ContextReport,
+} from '../lib/context-budget';
+import { buildPreamble } from '../services/service';
 
 const PLUGIN_ID = 'ai-sdk';
 
@@ -31,8 +40,24 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
       ability: ctx.state?.userAbility,
     });
 
-    // Get the response using toUIMessageStreamResponse
-    const response = result.toUIMessageStreamResponse();
+    // Attach token usage to the assistant message so the panel can show how
+    // much of the window the conversation is using. Without this the client
+    // has no idea what a turn cost, and the point at which a conversation
+    // stops fitting arrives with no warning.
+    const response = result.toUIMessageStreamResponse({
+      messageMetadata: ({ part }: { part: any }) => {
+        if (part?.type !== 'finish') return undefined;
+        const usage = part.totalUsage ?? part.usage;
+        if (!usage) return undefined;
+        return {
+          usage: {
+            inputTokens: usage.inputTokens ?? null,
+            outputTokens: usage.outputTokens ?? null,
+            totalTokens: usage.totalTokens ?? null,
+          },
+        };
+      },
+    } as any);
 
     // Set headers for streaming
     ctx.status = 200;
@@ -55,6 +80,48 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
    * means the data genuinely is not leaving the machine — which is the whole
    * point of the claim, so it should not be guessed from the provider label.
    */
+  /**
+   * What the conversation costs before it starts.
+   *
+   * Measured for the calling admin rather than in general, because the tool
+   * set is filtered by their role: two admins on the same install can face
+   * very different preambles, and the one with more tools is the one closer
+   * to the edge.
+   */
+  async getContextInfo(ctx: Context) {
+    const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
+
+    const { system, tools } = buildPreamble(strapi, {
+      adminUserId: ctx.state?.user?.id,
+      ability: ctx.state?.userAbility,
+    });
+
+    const toolMeasure = measureTools(tools);
+    const systemTokens = estimateTokens(system);
+    const preambleTokens = systemTokens + toolMeasure.tokens;
+
+    const detected = await detectContextWindow(config);
+
+    const base = {
+      systemTokens,
+      toolTokens: toolMeasure.tokens,
+      toolCount: toolMeasure.count,
+      preambleTokens,
+      contextWindow: detected.window,
+      windowSource: detected.source,
+      trainedContext: detected.trained ?? null,
+      preambleShare: detected.window ? preambleTokens / detected.window : null,
+    };
+
+    const report: ContextReport = {
+      ...base,
+      warning: warnAboutBudget(base),
+      estimated: true,
+    };
+
+    ctx.body = { data: report };
+  },
+
   async getModelInfo(ctx: Context) {
     const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
     const provider = config?.provider ?? 'anthropic';
@@ -138,7 +205,7 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
         } catch {
           // endpoint answered but not in the documented shape; treat as up
         }
-        if (served.length > 0 && !served.includes(model)) {
+        if (served.length > 0 && !isServed(model, served)) {
           respond('model-missing', `Endpoint is up but does not serve "${model}". Available: ${served.slice(0, 6).join(', ')}`);
           return;
         }

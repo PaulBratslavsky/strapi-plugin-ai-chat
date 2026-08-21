@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Box, Typography } from '@strapi/design-system';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
@@ -8,6 +8,7 @@ import { useMemories } from '../hooks/useMemories';
 import { useNotes } from '../hooks/useNotes';
 import { useToolSources } from '../hooks/useToolSources';
 import { PLUGIN_ID } from '../pluginId';
+import { ContextBadge } from './ContextBadge';
 import { ConversationSidebar } from './ConversationSidebar';
 import { MemoryPanel } from './MemoryPanel';
 import { NotePanel } from './NotePanel';
@@ -116,6 +117,17 @@ export function Chat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Token usage the server attached to the most recent answered turn. Read
+  // backwards because only assistant messages carry it, and a turn still
+  // streaming has none yet.
+  const lastUsage = useMemo<number | null>(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const total = (messages[i] as any)?.metadata?.usage?.totalTokens;
+      if (typeof total === 'number') return total;
+    }
+    return null;
+  }, [messages]);
+
   return (
     <ChatLayout>
       <ConversationSidebar
@@ -171,6 +183,7 @@ export function Chat() {
             onToggle={toggleSource}
           />
           <div style={{ flex: 1 }} />
+          <ContextBadge used={lastUsage} />
           <ToggleSidebarBtn
             onClick={() => setNotePanelOpen((prev) => !prev)}
             aria-label={notePanelOpen ? 'Hide notes' : 'Show notes'}

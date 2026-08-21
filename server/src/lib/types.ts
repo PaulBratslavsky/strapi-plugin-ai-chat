@@ -60,6 +60,12 @@ export interface PluginConfig {
   maxConversationMessages?: number;
   /** Max tool call steps for admin chat (defaults to 3) */
   maxSteps?: number;
+  /**
+   * Tokens the model can actually read. Only needed when it cannot be
+   * detected, since a served window often differs from what the weights
+   * support.
+   */
+  contextWindow?: number;
   guardrails?: GuardrailConfig;
 }
 

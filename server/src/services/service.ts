@@ -82,6 +82,31 @@ export function composeSystemPrompt(config: PluginConfig | undefined, toolsDescr
   return `${withTools}\n\n${TOOL_DISCIPLINE}`;
 }
 
+/**
+ * Assemble the system prompt and tool set exactly as a chat request would.
+ *
+ * Shared with the context report so the reported cost is the real one. A
+ * separate approximation would drift from what is actually sent, and a budget
+ * number that is quietly wrong is worse than no number at all.
+ *
+ * Saved memories are not included. They are an async read per request and vary
+ * with the conversation, so the figure here is the floor rather than the exact
+ * total.
+ */
+export function buildPreamble(
+  strapi: Core.Strapi,
+  options?: { adminUserId?: number; enabledToolSources?: string[]; ability?: CallerAbility },
+): { system: string; tools: ReturnType<typeof createTools> } {
+  const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
+  const tools = createTools(strapi, {
+    adminUserId: options?.adminUserId,
+    enabledToolSources: options?.enabledToolSources,
+    ability: options?.ability,
+  });
+
+  return { system: composeSystemPrompt(config, describeTools(tools)), tools };
+}
+
 const service = ({ strapi }: { strapi: Core.Strapi }) => {
   const plugin = strapi.plugin('ai-sdk') as unknown as PluginInstance;
 
