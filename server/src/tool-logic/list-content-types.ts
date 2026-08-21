@@ -1,10 +1,17 @@
 import type { Core } from '@strapi/strapi';
 import { z } from 'zod';
 
-export const listContentTypesSchema = z.object({});
+export const listContentTypesSchema = z.object({
+  contentType: z
+    .string()
+    .optional()
+    .describe(
+      'Optional UID (e.g. "api::article.article"). When given, only that content type and the components it actually uses are returned, which is a fraction of the full listing. Pass it once the target is known.',
+    ),
+});
 
 export const listContentTypesDescription =
-  'List all Strapi content types and components with their fields, relations, and structure. This is the starting point for any content operation — call it first to discover content type UIDs (e.g. "api::article.article"), field names, relation targets, and components. No parameters required. Results are cached.';
+  'List Strapi content types and components with their fields, relations, and structure. This is the starting point for any content operation - call it first to discover content type UIDs (e.g. "api::article.article"), field names, relation targets, and components. Each field reports its type and any constraints it carries (required, maxLength, minLength, enum, default) - respect them when writing, since a violation is rejected. Pass contentType to get just one type and the components it uses, which is much smaller than the full listing. Results are cached.';
 
 export interface RelationSummary {
   field: string;
@@ -13,11 +20,33 @@ export interface RelationSummary {
   targetDisplayName: string;
 }
 
+/**
+ * One field, with the constraints a model has to respect in order to write it.
+ *
+ * Names alone were not enough. A model told only that `description` exists will
+ * send 90 characters to a field capped at 80, and the only feedback is a
+ * rejected write it then has to guess its way out of. Strong models absorb that
+ * round trip; smaller ones spend their one attempt on it and either give up or
+ * report a save that never happened.
+ *
+ * Every property past `name` and `type` is omitted when the attribute does not
+ * set it, so the common field costs two keys rather than eight.
+ */
+export interface FieldSummary {
+  name: string;
+  type: string;
+  required?: boolean;
+  maxLength?: number;
+  minLength?: number;
+  enum?: string[];
+  default?: unknown;
+}
+
 export interface ContentTypeSummary {
   uid: string;
   kind: 'collectionType' | 'singleType';
   displayName: string;
-  fields: string[];
+  fields: FieldSummary[];
   relations: RelationSummary[];
   components: string[];
 }
@@ -27,6 +56,7 @@ export interface ComponentSummary {
   category: string;
   displayName: string;
   fieldCount: number;
+  fields: FieldSummary[];
 }
 
 export interface ListContentTypesResult {
@@ -88,20 +118,34 @@ function collectComponents(attr: Record<string, unknown>): string[] {
   return [];
 }
 
+/** Read the constraints Strapi records on an attribute, skipping the unset. */
+function summarizeField(name: string, attrDef: unknown): FieldSummary {
+  const attr = (attrDef ?? {}) as Record<string, unknown>;
+  const summary: FieldSummary = { name, type: (attr.type as string) ?? 'unknown' };
+
+  if (attr.required === true) summary.required = true;
+  if (typeof attr.maxLength === 'number') summary.maxLength = attr.maxLength;
+  if (typeof attr.minLength === 'number') summary.minLength = attr.minLength;
+  if (Array.isArray(attr.enum)) summary.enum = attr.enum as string[];
+  if (attr.default !== undefined) summary.default = attr.default;
+
+  return summary;
+}
+
 function parseContentType(
   uid: string,
   contentType: unknown,
   allContentTypes: object
 ): ContentTypeSummary {
   const ct = contentType as StrapiContentType;
-  const fields: string[] = [];
+  const fields: FieldSummary[] = [];
   const relations: RelationSummary[] = [];
   const usedComponents = new Set<string>();
 
   for (const [attrName, attrDef] of Object.entries(ct.attributes || {})) {
     if (INTERNAL_FIELDS.has(attrName)) continue;
 
-    fields.push(attrName);
+    fields.push(summarizeField(attrName, attrDef));
 
     const relation = extractRelation(attrName, attrDef, allContentTypes);
     if (relation) relations.push(relation);
@@ -128,29 +172,54 @@ function parseComponent(uid: string, component: unknown): ComponentSummary {
     category: comp.category || 'default',
     displayName: comp.info?.displayName || uid,
     fieldCount: Object.keys(comp.attributes || {}).length,
+    fields: Object.entries(comp.attributes || {}).map(([n, d]) => summarizeField(n, d)),
   };
 }
 
 // Cache — content types don't change at runtime so we compute once
 let cachedResult: ListContentTypesResult | null = null;
 
+/** Clears the module-level cache. Exists for tests, which build their own schemas. */
+export function __resetContentTypeCache(): void {
+  cachedResult = null;
+}
+
 /**
  * Core logic for listing content types and components.
  * Shared between AI SDK tool and MCP tool.
  * Results are cached since content types are static after server startup.
  */
-export async function listContentTypes(strapi: Core.Strapi): Promise<ListContentTypesResult> {
-  if (cachedResult) return cachedResult;
+export async function listContentTypes(
+  strapi: Core.Strapi,
+  params?: { contentType?: string },
+): Promise<ListContentTypesResult> {
+  if (!cachedResult) {
+    const contentTypes = Object.entries(strapi.contentTypes)
+      .filter(([uid]) => isApiContentType(uid))
+      .map(([uid, ct]) => parseContentType(uid, ct, strapi.contentTypes))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-  const contentTypes = Object.entries(strapi.contentTypes)
-    .filter(([uid]) => isApiContentType(uid))
-    .map(([uid, ct]) => parseContentType(uid, ct, strapi.contentTypes))
-    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+    const components = Object.entries(strapi.components)
+      .map(([uid, comp]) => parseComponent(uid, comp))
+      .sort((a, b) => a.category.localeCompare(b.category) || a.displayName.localeCompare(b.displayName));
 
-  const components = Object.entries(strapi.components)
-    .map(([uid, comp]) => parseComponent(uid, comp))
-    .sort((a, b) => a.category.localeCompare(b.category) || a.displayName.localeCompare(b.displayName));
+    cachedResult = { contentTypes, components };
+  }
 
-  cachedResult = { contentTypes, components };
-  return cachedResult;
+  // Narrowing is the point of the parameter, not a nicety. The full listing
+  // runs to several thousand tokens, and a model working inside a small context
+  // window spends them here instead of on the transcript it was asked to
+  // summarise. Once the target UID is known the rest of the catalogue is dead
+  // weight, so return that type and only the components it actually uses.
+  const wanted = params?.contentType;
+  if (!wanted) return cachedResult;
+
+  const match = cachedResult.contentTypes.find((c) => c.uid === wanted);
+  if (!match) return cachedResult;
+
+  const used = new Set(match.components);
+  return {
+    contentTypes: [match],
+    components: cachedResult.components.filter((c) => used.has(c.uid)),
+  };
 }

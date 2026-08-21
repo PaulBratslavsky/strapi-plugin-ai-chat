@@ -13,6 +13,7 @@ import {
   DEFAULT_MODEL,
 } from '../lib/types';
 import { createTools, describeTools } from '../tools';
+import { closeToolsAfterWrite } from '../lib/close-tools-after-write';
 import type { CallerAbility } from '../lib/tool-registry';
 import { trimMessages } from '../lib/trim-messages';
 
@@ -32,6 +33,29 @@ Strapi filter syntax for searchContent and aggregateContent:
 
 Task management: You have a manageTask tool for tracking the user's tasks. At the START of every conversation, proactively use manageTask with action "summary" to check for open tasks, then greet the user with a brief status and suggest what to tackle next based on consequence × impact score. When the user mentions action items, commitments, or things they need to do during conversation, proactively create tasks by calling manageTask with action "create" — do NOT include consequence or impact scores, just omit them. A UI form will appear in the chat for the user to set scores and confirm. Never ask for scores in text. When presenting task lists, use markdown tables.`;
 
+/**
+ * Rules that hold no matter what prompt the site configures.
+ *
+ * `systemPrompt` in config replaces DEFAULT_PREAMBLE outright, so a site that
+ * sets a one-line prompt loses every piece of tool guidance the plugin ships.
+ * That is the right behaviour for tone and role, and the wrong behaviour for
+ * the rules that keep a tool loop honest, so these are appended rather than
+ * substituted.
+ *
+ * Each line addresses a failure observed in a real run rather than a
+ * hypothetical. A model announced "I will now save this draft" and ended its
+ * turn; another reported a save that never happened after one rejected write;
+ * a third sent a value to a field whose limit it had already been told.
+ * Smaller models need this spelled out, and larger ones are not harmed by it.
+ */
+const TOOL_DISCIPLINE =
+  `Tool use rules. These always apply and override any conflicting instruction above.
+- Never say you created, updated, saved, uploaded or sent something unless a tool call returned a successful result for it. Reporting an action you did not take is the worst thing you can do here.
+- Do not end your turn by announcing an action you are about to take. If a tool call is the next step, make it now, in this turn.
+- When a tool returns an error, read it. Errors name the field and the reason. Correct those arguments and call the tool again rather than giving up or restating the plan.
+- Before writing content, call listContentTypes and honour every constraint it reports for the fields you are setting: required, maxLength, minLength, enum. A value that breaks one is rejected.
+- If a tool still fails after you have genuinely tried to fix the arguments, tell the user plainly what failed and what the error said. Never present a failed action as finished.`;
+
 const DEFAULT_PUBLIC_PREAMBLE =
   `You are a helpful public assistant for this website. Use your tools to answer questions about the site content. You cannot modify any content or perform administrative actions.
 
@@ -44,17 +68,18 @@ Strapi filter syntax for searchContent and aggregateContent:
 - Always nest relation filters as: { relationField: { fieldOnRelatedType: { $operator: value } } }
 - Never use flat dot-path syntax like "contentTags.title" in filters — always use nested objects.`;
 
-function composeSystemPrompt(config: PluginConfig | undefined, toolsDescription: string, override?: string): string {
+export function composeSystemPrompt(config: PluginConfig | undefined, toolsDescription: string, override?: string): string {
   // If the caller provided an explicit system prompt, use it as the base
   const base = override || config?.systemPrompt || DEFAULT_PREAMBLE;
 
   // Support {tools} placeholder in the base prompt
-  if (base.includes('{tools}')) {
-    return base.replace('{tools}', toolsDescription);
-  }
+  const withTools = base.includes('{tools}')
+    ? base.replace('{tools}', toolsDescription)
+    : `${base}\n\n${toolsDescription}`;
 
-  // Otherwise append tool descriptions
-  return `${base}\n\n${toolsDescription}`;
+  // Appended last so it wins on a re-read, and so a configured systemPrompt
+  // cannot drop it.
+  return `${withTools}\n\n${TOOL_DISCIPLINE}`;
 }
 
 const service = ({ strapi }: { strapi: Core.Strapi }) => {
@@ -110,6 +135,11 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
         ...(config?.temperature !== undefined ? { temperature: config.temperature } : {}),
         ...(config?.topP !== undefined ? { topP: config.topP } : {}),
         ...(config?.topK !== undefined ? { topK: config.topK } : {}),
+        // Withdraw a mutating tool once it has succeeded, so the model writes
+        // its summary instead of calling the tool again.
+        ...(plugin.toolRegistry
+          ? { prepareStep: closeToolsAfterWrite(plugin.toolRegistry, tools) }
+          : {}),
         stopWhen: stepCountIs(maxSteps),
       });
     },

@@ -34,6 +34,43 @@ describe('AIProvider.initialize provider requirements', () => {
     expect(messages.join(' ')).toMatch(/baseURL/);
   });
 
+  it('treats a blank baseURL as absent rather than as a URL', () => {
+    // `env('AI_BASE_URL')` returns "" for a variable that exists but is empty.
+    // Passed through, the Anthropic SDK joins it with the request path and
+    // calls `/messages`, failing as `Invalid URL` instead of as a config error.
+    const provider = new AIProvider();
+
+    const ok = provider.initialize({ provider: 'anthropic', apiKey: 'k', baseURL: '' }, silent);
+
+    expect(ok).toBe(true);
+    expect((provider as any).baseURL).toBeUndefined();
+  });
+
+  it('treats a whitespace-only baseURL as absent', () => {
+    const provider = new AIProvider();
+
+    provider.initialize({ provider: 'anthropic', apiKey: 'k', baseURL: '   ' }, silent);
+
+    expect((provider as any).baseURL).toBeUndefined();
+  });
+
+  it('rejects openai-compatible when baseURL is blank', () => {
+    const provider = new AIProvider();
+
+    expect(provider.initialize({ provider: 'openai-compatible', baseURL: '  ' }, silent)).toBe(false);
+  });
+
+  it('trims a baseURL that carries stray whitespace', () => {
+    const provider = new AIProvider();
+
+    provider.initialize(
+      { provider: 'openai-compatible', baseURL: '  http://localhost:11434/v1  ' },
+      silent,
+    );
+
+    expect((provider as any).baseURL).toBe('http://localhost:11434/v1');
+  });
+
   it('still requires an apiKey for anthropic', () => {
     const provider = new AIProvider();
 
