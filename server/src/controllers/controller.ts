@@ -7,6 +7,7 @@ import type { PluginConfig, PluginInstance } from '../lib/types';
 import { DEFAULT_MODEL } from '../lib/types';
 import { getService, validateBody, validateChatBody, createSSEStream, writeSSE } from '../lib/utils';
 import { actionForTool } from '../lib/tool-permissions';
+import { isServed } from '../lib/model-tag';
 import {
   detectContextWindow,
   measureTools,
@@ -204,7 +205,7 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
         } catch {
           // endpoint answered but not in the documented shape; treat as up
         }
-        if (served.length > 0 && !served.includes(model)) {
+        if (served.length > 0 && !isServed(model, served)) {
           respond('model-missing', `Endpoint is up but does not serve "${model}". Available: ${served.slice(0, 6).join(', ')}`);
           return;
         }
