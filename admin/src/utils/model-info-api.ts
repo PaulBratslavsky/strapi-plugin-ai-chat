@@ -60,3 +60,40 @@ export async function fetchModelHealth(): Promise<ModelHealth | null> {
     return null;
   }
 }
+
+export type ContextWindowSource =
+  | 'config'
+  | 'ollama-running'
+  | 'ollama-modelfile'
+  | 'ollama-default'
+  | 'unknown';
+
+export interface ContextInfo {
+  systemTokens: number;
+  toolTokens: number;
+  toolCount: number;
+  /** Instructions plus tool schemas, sent before the conversation. */
+  preambleTokens: number;
+  contextWindow: number | null;
+  windowSource: ContextWindowSource;
+  /** What the weights support, when it differs from what is being served. */
+  trainedContext: number | null;
+  preambleShare: number | null;
+  warning: string | null;
+  estimated: true;
+}
+
+export async function fetchContextInfo(): Promise<ContextInfo | null> {
+  try {
+    const token = getToken();
+    const res = await fetch(`${getBackendURL()}/${PLUGIN_ID}/context-info`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { data?: ContextInfo };
+    return body.data ?? null;
+  } catch {
+    // Informational, like the rest of the header: never block chat on it.
+    return null;
+  }
+}
