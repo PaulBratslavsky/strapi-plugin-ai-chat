@@ -46,6 +46,21 @@ export function messageText(message: Message): string {
     .join('');
 }
 
+/** Reasoning/thinking text in a message, if any. */
+export function messageReasoningText(message: Message): string {
+  return (message.parts ?? [])
+    .filter((part: any) => part.type === 'reasoning' && typeof part.text === 'string')
+    .map((part: any) => part.text)
+    .join('');
+}
+
+/** Whether the message has any reasoning parts still streaming. */
+export function hasStreamingReasoning(message: Message): boolean {
+  return (message.parts ?? []).some(
+    (part: any) => part.type === 'reasoning' && part.state === 'streaming',
+  );
+}
+
 /** Tool invocations in a message, in the order the model made them. */
 export function messageToolParts(message: Message): ToolPart[] {
   return (message.parts ?? []).filter((part: any) =>
