@@ -3,6 +3,25 @@
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
 
+## 2.6.0 - 2026-08-24
+
+Shows the model's reasoning while it thinks.
+
+Thinking models emit reasoning parts alongside their tool calls and text, and
+the panel was storing them and then discarding them at render. A conversation
+with `qwen3-14b-32k` persisted `step-start, reasoning, tool-call, reasoning,
+text` and displayed only the last of those, so the pause before an answer had
+no explanation.
+
+- Reasoning streams into a collapsible panel with a live "Thinking" indicator,
+  then settles to "Thought for a moment" with a preview
+- The panel opens itself while streaming and follows the text as it arrives
+- Typing dots now appear only when there is no reasoning to show, rather than
+  alongside it
+
+The empty-reply note is unchanged and still fires on a turn that used tools
+without answering, since reasoning is not a reply.
+
 ## 2.5.0 - 2026-08-21
 
 Shows how much of the model's context window a conversation is using, in the
