@@ -1,4 +1,4 @@
-import { forwardRef, type ComponentProps } from 'react';
+import { forwardRef, useState, useRef, useEffect, type ComponentProps } from 'react';
 import { Box, Typography } from '@strapi/design-system';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
@@ -6,7 +6,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Sparkle } from '@strapi/icons';
 import type { Message } from '../hooks/useChat';
-import { messageText, messageToolParts, toolPartName } from '../hooks/useChat';
+import { messageText, messageToolParts, toolPartName, messageReasoningText, hasStreamingReasoning } from '../hooks/useChat';
 import { ToolCallDisplay, HIDDEN_TOOLS } from './ToolCallDisplay';
 
 // --- Styled Components ---
@@ -159,6 +159,65 @@ const ThinkingSpinner = styled.span`
   }
 `;
 
+const ReasoningToggle = styled.button<{ $open: boolean }>`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #8e8ea9;
+  transition: color 0.15s;
+
+  &:hover { color: #666687; }
+
+  &::before {
+    content: '';
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-left: 5px solid ${({ $open }) => ($open ? 'transparent' : 'currentColor')};
+    border-top: 5px solid ${({ $open }) => ($open ? 'currentColor' : 'transparent')};
+    border-right: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    transition: transform 0.15s;
+  }
+`;
+
+const ReasoningBox = styled.div`
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8e8ea9;
+  background: rgba(0,0,0,0.02);
+  border-left: 2px solid #dcdce4;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  border-radius: 0 4px 4px 0;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+`;
+
+const ReasoningStreamDot = styled.span`
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4945ff;
+  animation: pulse 1s ease-in-out infinite;
+  margin-left: 4px;
+  vertical-align: middle;
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+  }
+`;
+
 const EmptyState = styled.div`
   display: flex;
   flex-direction: column;
@@ -207,6 +266,43 @@ const markdownComponents = {
   a: MarkdownLink,
 } as ComponentProps<typeof Markdown>['components'];
 
+// --- Reasoning Display ---
+
+function ReasoningDisplay({ text, isStreaming }: { text: string; isStreaming: boolean }) {
+  const [open, setOpen] = useState(isStreaming);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // Auto-open when reasoning starts streaming
+  useEffect(() => {
+    if (isStreaming) setOpen(true);
+  }, [isStreaming]);
+
+  // Auto-scroll the reasoning box while streaming
+  useEffect(() => {
+    if (isStreaming && boxRef.current) {
+      boxRef.current.scrollTop = boxRef.current.scrollHeight;
+    }
+  });
+
+  if (!text) return null;
+
+  const preview = text.length > 60 ? text.slice(0, 60) + '…' : text;
+
+  return (
+    <>
+      <ReasoningToggle $open={open} onClick={() => setOpen((v) => !v)}>
+        {isStreaming ? (
+          <>Thinking<ReasoningStreamDot /></>
+        ) : (
+          <>Thought for a moment</>
+        )}
+        {!open && <span style={{ opacity: 0.6 }}> — {preview}</span>}
+      </ReasoningToggle>
+      {open && <ReasoningBox ref={boxRef}>{text}</ReasoningBox>}
+    </>
+  );
+}
+
 // --- Component ---
 
 interface MessageListProps {
@@ -237,6 +333,8 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(
           // bubble here; the order is preserved in the data, so rendering them
           // interleaved is a later change rather than a lost one.
           const text = messageText(message);
+          const reasoning = messageReasoningText(message);
+          const isReasoning = hasStreamingReasoning(message);
           const toolParts = messageToolParts(message).map((part) => ({
             ...part,
             toolName: toolPartName(part),
@@ -259,13 +357,16 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(
                   {message.role === 'user' ? 'You' : 'Assistant'}
                 </MessageRole>
                 {message.role === 'user' && text}
+                {message.role === 'assistant' && reasoning && (
+                  <ReasoningDisplay text={reasoning} isStreaming={isReasoning} />
+                )}
+                {message.role === 'assistant' && !displayContent && !reasoning && isLoading && (
+                  <TypingDots><span /><span /><span /></TypingDots>
+                )}
                 {message.role === 'assistant' && displayContent && (
                   <MarkdownBody $isUser={false}>
                     <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{displayContent}</Markdown>
                   </MarkdownBody>
-                )}
-                {message.role === 'assistant' && !displayContent && isLoading && (
-                  <TypingDots><span /><span /><span /></TypingDots>
                 )}
                 {/*
                   A finished assistant turn with tool calls but no text. The model
