@@ -6,4 +6,8 @@ export const uploadMediaTool: ToolDefinition = {
   description: uploadMediaDescription,
   schema: uploadMediaSchema,
   execute: async (args, strapi) => uploadMedia(strapi, args),
+  // One call uploads one file, so a gallery is several calls with different
+  // URLs rather than one call repeated. Withdrawing this after the first
+  // success would strand the model partway through the job.
+  repeatable: true,
 };

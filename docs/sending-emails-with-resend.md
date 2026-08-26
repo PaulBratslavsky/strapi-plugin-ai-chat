@@ -1,39 +1,61 @@
-# Sending Emails with Resend
+# Sending email
 
-This guide covers how to set up [Resend](https://resend.com/) as your Strapi email provider and how the AI SDK plugin uses it to send emails programmatically through the chatbot.
+The `sendEmail` tool lets the model send mail through whatever email provider
+Strapi is already configured with. This guide uses [Resend](https://resend.com/),
+but nothing in the tool is Resend-specific. Current as of **2.6.0**.
+
+## Contents
+
+- [How it works](#how-it-works)
+- [Setting up Resend](#setting-up-resend)
+- [Granting the tool](#granting-the-tool)
+- [Tool parameters](#tool-parameters)
+- [Failure handling](#failure-handling)
+- [Domain verification](#domain-verification)
+- [Using it](#using-it)
 
 ---
 
-## Table of Contents
+## How it works
 
-1. [Prerequisites](#prerequisites)
-2. [Installing the Resend Provider](#installing-the-resend-provider)
-3. [Configuration](#configuration)
-4. [Environment Variables](#environment-variables)
-5. [Testing the Setup](#testing-the-setup)
-6. [How the AI SDK Plugin Sends Emails](#how-the-ai-sdk-plugin-sends-emails)
-7. [Architecture](#architecture)
-8. [Usage Examples](#usage-examples)
+`sendEmail` does not talk to any mail API. It calls Strapi's own email service:
 
----
-
-## Prerequisites
-
-- A Strapi v5 project
-- A [Resend account](https://resend.com/) with an API key
-- A verified domain in Resend (or use Resend's test address for development)
-
-## Installing the Resend Provider
-
-Install the community email provider in your **Strapi project** root (not the plugin directory):
-
-```bash
-npm install strapi-provider-email-resend
+```typescript
+strapi.plugin('email').service('email').send({ to, subject, html, text, cc, bcc, replyTo });
 ```
 
-## Configuration
+So the provider is whatever `@strapi/plugin-email` is configured with —
+Sendmail, SendGrid, Mailgun, Resend, anything with a Strapi provider package.
+Configure it once for the application and the tool follows.
 
-Add the email provider configuration to your Strapi project's `config/plugins.ts` (or `config/plugins.js`):
+```mermaid
+flowchart LR
+  A[Model calls sendEmail] --> B[tool-logic/send-email.ts]
+  B --> C[strapi.plugin email<br/>service send]
+  C --> D[provider package]
+  D --> E[Resend API]
+```
+
+The tool is tiered `access: 'destructive'` and is **not** `internal`, so it
+reaches both admin chat and MCP, and needs an explicit permission grant on both.
+
+Destructive is the right tier for it: sending mail is irreversible and has an
+external side effect. It also means the tool is withdrawn once it has
+successfully sent, so a model cannot send the same message twice in one turn.
+
+---
+
+## Setting up Resend
+
+### 1. Install the provider
+
+In your **Strapi application**, not the plugin directory:
+
+```bash
+npm install @strapi/plugin-email strapi-provider-email-resend
+```
+
+### 2. Configure it
 
 ```typescript
 // config/plugins.ts
@@ -45,153 +67,160 @@ export default ({ env }) => ({
         apiKey: env('RESEND_API_KEY'),
       },
       settings: {
-        defaultFrom: env('RESEND_DEFAULT_FROM', 'noreply@yourdomain.com'),
-        defaultReplyTo: env('RESEND_DEFAULT_REPLY_TO', 'support@yourdomain.com'),
+        defaultFrom: env('EMAIL_DEFAULT_FROM'),
+        defaultReplyTo: env('EMAIL_DEFAULT_REPLY_TO'),
       },
+    },
+  },
+
+  'ai-sdk': {
+    enabled: true,
+    config: {
+      apiKey: env('ANTHROPIC_API_KEY'),
     },
   },
 });
 ```
 
-## Environment Variables
-
-Add these to your `.env` file:
+### 3. Environment variables
 
 ```bash
-RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
-RESEND_DEFAULT_FROM=noreply@yourdomain.com
-RESEND_DEFAULT_REPLY_TO=support@yourdomain.com
+RESEND_API_KEY=re_xxxxxxxxxxxx
+EMAIL_DEFAULT_FROM=hello@yourdomain.com
+EMAIL_DEFAULT_REPLY_TO=hello@yourdomain.com
 ```
 
-| Variable | Required | Description |
-|---|---|---|
-| `RESEND_API_KEY` | Yes | Your Resend API key from the [Resend dashboard](https://resend.com/api-keys) |
-| `RESEND_DEFAULT_FROM` | No | Default sender address. Must be from a verified domain in Resend |
-| `RESEND_DEFAULT_REPLY_TO` | No | Default reply-to address |
+The sender address is **not** a tool parameter. It comes from `defaultFrom`, so
+the model cannot choose who the mail appears to be from.
 
-## Testing the Setup
+### 4. Verify it independently
 
-1. Start your Strapi dev server: `npm run develop`
-2. Go to **Settings > Email > Configuration** in the admin panel
-3. Enter a recipient email and click **Send test email**
-4. Verify the email arrives in your inbox
-
-If the test email succeeds, Resend is properly configured and ready for the AI SDK plugin to use.
-
-## How the AI SDK Plugin Sends Emails
-
-The AI SDK plugin exposes a `sendEmail` tool to the chatbot. When a user asks the chatbot to send an email, the AI:
-
-1. Gathers the recipient, subject, and content through conversation
-2. **Confirms the recipient email address** by repeating it back and asking for explicit approval
-3. Composes an HTML email body and shows the draft to the user
-4. Sends only after the user confirms the recipient, subject, and body
-
-This confirmation step is enforced via the tool description — the AI is instructed to always repeat the recipient email back to the user and wait for approval before calling the tool. This prevents the AI from substituting a default or admin email address.
-
-Under the hood, the tool calls the same email service available to any Strapi plugin:
+Before involving the model, confirm the provider works on its own:
 
 ```typescript
 await strapi.plugin('email').service('email').send({
-  to: 'recipient@example.com',
-  subject: 'Meeting Tomorrow',
-  html: '<h1>Hello</h1><p>Just a reminder about our meeting tomorrow at 10am.</p>',
+  to: 'you@example.com',
+  subject: 'Test',
+  html: '<p>It works.</p>',
 });
 ```
 
-The email service automatically uses the `defaultFrom` and `defaultReplyTo` addresses from your plugin configuration, so the tool only needs to provide `to`, `subject`, and the email body.
-
-### Supported Parameters
-
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `to` | string | Yes | Recipient email address |
-| `subject` | string | Yes | Email subject line |
-| `html` | string | Yes | Email body as HTML |
-| `text` | string | No | Plain text fallback |
-| `cc` | string | No | CC email address |
-| `bcc` | string | No | BCC email address |
-| `replyTo` | string | No | Reply-to address (overrides default) |
-
-### Error Handling and Status Messages
-
-The `sendEmail` tool never crashes the chat stream. Instead, it always returns a result object with a `success` flag and a `message` that the AI relays to the user:
-
-```typescript
-interface SendEmailResult {
-  success: boolean;  // true if sent, false if something went wrong
-  message: string;   // human-readable status the AI shows to the user
-  to: string;
-  subject: string;
-}
-```
-
-Common failure scenarios and the messages returned:
-
-| Scenario | `message` shown to user |
-|---|---|
-| Email sent successfully | "Email successfully sent to alice@example.com with subject "Hello"." |
-| Email plugin not installed | "The email plugin is not installed or enabled. Install @strapi/plugin-email and configure an email provider." |
-| Unverified domain (Resend test mode) | "Failed to send email to alice@example.com: ... This usually means the sending domain is not verified in Resend. In test mode, emails can only be delivered to the account owner's address. Verify your domain at https://resend.com/domains to send to any recipient." |
-| Other send failure | "Failed to send email to alice@example.com: \<error detail\>." |
-
-### Resend Domain Verification (Important)
-
-By default, new Resend accounts are in **test mode**. In test mode, you can only send emails to the email address associated with your Resend account. Sending to any other recipient will fail.
-
-To send emails to any address:
-
-1. Go to [resend.com/domains](https://resend.com/domains)
-2. Add and verify your sending domain (e.g. `yourdomain.com`)
-3. Update `RESEND_DEFAULT_FROM` to use an address on that domain (e.g. `noreply@yourdomain.com`)
-4. Restart Strapi
-
-Until the domain is verified, the chatbot will inform the user that the email could not be delivered and explain why.
-
-## Architecture
-
-The `sendEmail` tool follows the same pattern as all other AI SDK plugin tools:
-
-```
-server/src/
-├── tool-logic/
-│   └── send-email.ts        # Zod schema + sendEmail() core logic
-├── tools/definitions/
-│   └── send-email.ts         # ToolDefinition (wires schema to execute)
-```
-
-**`tool-logic/send-email.ts`** contains the Zod schema that validates parameters and the `sendEmail` function that calls Strapi's email service. This separation means the same logic is reusable across the AI SDK chat and MCP.
-
-**`tools/definitions/send-email.ts`** creates the `ToolDefinition` object with `internal: false`, which means the tool is available both in the admin chatbot and exposed via MCP as `send_email`.
-
-## Usage Examples
-
-### Via the Admin Chatbot
-
-Simply ask the chatbot to send an email in natural language:
-
-> "Send an email to alice@example.com letting her know the blog post is published"
-
-The chatbot will compose a draft, show it to you for confirmation, and send it once approved.
-
-### Via the API
-
-```bash
-curl -X POST http://localhost:1337/api/ai-sdk/ask \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_API_TOKEN" \
-  -d '{"prompt": "Send an email to bob@example.com with subject Hello and body Welcome aboard"}'
-```
-
-### Via MCP
-
-The tool is exposed as `send_email` through MCP, so any MCP client (like Claude Code) can call it directly with the parameters defined in the schema.
+If this fails, the tool will fail the same way. Fix it here first — the error is
+much easier to read outside a chat transcript.
 
 ---
 
-## References
+## Granting the tool
 
-- [Strapi Email Documentation](https://docs.strapi.io/cms/features/email)
-- [strapi-provider-email-resend on GitHub](https://github.com/jerodfritz/strapi-provider-email-resend)
-- [Strapi + Resend Integration Page](https://strapi.io/integrations/resend)
-- [Resend Documentation](https://resend.com/docs)
+Like every other MCP-exposed tool, `sendEmail` starts ungranted:
+
+```
+plugin::ai-sdk.tool.send-email
+```
+
+- **Settings > Administration Panel > Roles** — for admin chat. Under the
+  **AI SDK** section, subcategory **AI tools**, tick **Send email**.
+- **Settings > Administration Panel > Admin Tokens** — for MCP clients.
+
+Super Admin has it automatically. Everyone else sees no such tool until it is
+ticked, and the model is never offered it.
+
+This is worth being deliberate about. It is the one built-in tool that can act
+outside your Strapi instance.
+
+---
+
+## Tool parameters
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `to` | yes | Recipient address |
+| `subject` | yes | |
+| `html` | yes | Body as HTML; the model composes it |
+| `text` | no | Plain-text fallback, derived from `html` if omitted |
+| `cc` | no | |
+| `bcc` | no | |
+| `replyTo` | no | Falls back to `defaultReplyTo` |
+
+The tool description instructs the model to confirm the recipient, subject and
+body with the user before calling — repeating the address back and asking for
+explicit approval — and to use exactly the address the user gave rather than
+substituting a default or an admin address.
+
+That is a prompt-level instruction, so treat it as a usability feature rather
+than a control. If a model must never be able to mail arbitrary recipients, do
+not grant the tool.
+
+---
+
+## Failure handling
+
+`sendEmail` never throws. It returns a structured result:
+
+```typescript
+{ success: boolean, message: string, to: string, subject: string }
+```
+
+Returning rather than throwing is deliberate here. The message is written for
+the model to read aloud, and every failure path names something the user can act
+on.
+
+**No email plugin installed:**
+
+> The email plugin is not installed or enabled. Install `@strapi/plugin-email`
+> and configure an email provider (e.g. `strapi-provider-email-resend`).
+
+**Send failed:** the provider's own error, prefixed with the recipient.
+
+Because `TOOL_DISCIPLINE` forbids the model from claiming an action it did not
+complete, a failed send is reported as a failure rather than summarised as sent.
+
+---
+
+## Domain verification
+
+The single most common failure, and the tool detects it specifically. When a
+provider error matches `not allowed`, `verify`, `domain` or `can only send`, the
+result appends:
+
+> This usually means the sending domain is not verified in Resend. In test mode,
+> emails can only be delivered to the account owner's address. Verify your
+> domain at https://resend.com/domains to send to any recipient.
+
+Resend's test mode only delivers to the address that owns the account. Everything
+looks correctly wired, the tool reports failure, and the cause is a DNS record
+rather than anything in Strapi. Verify the domain at
+[resend.com/domains](https://resend.com/domains) before concluding the tool is
+broken.
+
+---
+
+## Using it
+
+**In admin chat:**
+
+```
+Email the draft summary of last week's posts to sarah@example.com
+```
+
+The model composes HTML, confirms the recipient with you, then sends.
+
+**Over MCP**, once a token holds the grant, the tool appears as `send_email`.
+
+**Directly**, bypassing the model entirely — call Strapi's email service, which
+is all the tool does:
+
+```typescript
+await strapi.plugin('email').service('email').send({
+  to: 'sarah@example.com',
+  subject: 'Weekly summary',
+  html: '<h1>This week</h1><p>...</p>',
+});
+```
+
+Note that `sendEmail` itself is not importable: `strapi-plugin-ai-sdk/strapi-server`
+resolves to a bundle whose only export is the Strapi plugin object. The logic in
+`tool-logic/send-email.ts` is a plain function of `(strapi, params)` with no
+dependency on the registry, chat or MCP — which is what makes it testable — but
+from outside the plugin, go through the email service directly. The only thing
+you give up is the structured result and the domain-verification hint.

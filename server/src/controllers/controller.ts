@@ -1,11 +1,9 @@
 import type { Core } from '@strapi/strapi';
 import type { Context } from 'koa';
 import { Readable } from 'node:stream';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import type { PluginConfig, PluginInstance } from '../lib/types';
 import { DEFAULT_MODEL } from '../lib/types';
-import { getService, validateBody, validateChatBody, createSSEStream, writeSSE } from '../lib/utils';
+import { getService, validateChatBody } from '../lib/utils';
 import { actionForTool } from '../lib/tool-permissions';
 import { isServed } from '../lib/model-tag';
 import {
@@ -32,12 +30,31 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
     if (!service) return;
 
     const adminUserId = ctx.state?.user?.id;
+
+    // Stop generating when the client hangs up.
+    //
+    // Without this, pressing Stop in the panel only aborts the browser's fetch.
+    // The server keeps streaming into a socket nobody is reading, the model
+    // keeps generating, and the remaining tool calls still run — so a stopped
+    // turn goes on costing tokens and still writes whatever it was about to
+    // write. The signal reaches streamText, which cancels the run, and each
+    // tool's execute, which can cancel its own work.
+    // Listen on the RESPONSE, not the request. `req`'s 'close' also fires on a
+    // normally completed request in current Node, which would abort every
+    // healthy stream. `res` 'close' plus a `writableFinished` check
+    // distinguishes "client went away" from "we finished sending".
+    const abort = new AbortController();
+    ctx.res.once('close', () => {
+      if (!ctx.res.writableFinished) abort.abort();
+    });
+
     const result = await service.chat(body.messages, {
       system: body.system,
       adminUserId,
       enabledToolSources: body.enabledToolSources,
       // RBAC: the model only sees tools this admin's role grants.
       ability: ctx.state?.userAbility,
+      abortSignal: abort.signal,
     });
 
     // Attach token usage to the assistant message so the panel can show how

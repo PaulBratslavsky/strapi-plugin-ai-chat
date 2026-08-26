@@ -26,6 +26,15 @@ const destructiveTool = {
   access: 'destructive' as const,
 };
 
+/** A write where each call is a distinct item, e.g. one file per call. */
+const repeatableWriteTool = {
+  name: 'uploadMedia',
+  description: 'Upload',
+  schema: z.object({}),
+  execute: async () => ({}),
+  repeatable: true,
+};
+
 function setup(...defs: any[]) {
   const registry = new ToolRegistry();
   for (const d of defs) registry.register(d);
@@ -91,5 +100,40 @@ describe('closeToolsAfterWrite', () => {
     const { prepare } = setup(readTool);
 
     expect(prepare).toBeUndefined();
+  });
+
+  describe('repeatable writes', () => {
+    // These need a non-repeatable write in the registry too, otherwise there
+    // is nothing to withdraw and no hook is produced at all — the case the
+    // last test in this block covers.
+    it('keeps a repeatable write available after it succeeds', () => {
+      const { prepare } = setup(readTool, writeTool, repeatableWriteTool);
+
+      // Uploading a second image is a second upload, not a repeat of the first.
+      expect(prepare!({ steps: [step('uploadMedia')] })).toEqual({});
+    });
+
+    it('stays available across many successful calls', () => {
+      const { prepare } = setup(readTool, writeTool, repeatableWriteTool);
+
+      const steps = [step('uploadMedia'), step('uploadMedia'), step('uploadMedia')];
+
+      expect(prepare!({ steps })).toEqual({});
+    });
+
+    it('still withdraws non-repeatable writes in the same turn', () => {
+      const { prepare } = setup(readTool, writeTool, repeatableWriteTool);
+
+      const result = prepare!({ steps: [step('uploadMedia'), step('createContent')] });
+
+      // uploadMedia survives so the gallery can continue; createContent does not.
+      expect(result.activeTools).toEqual(['searchContent', 'uploadMedia']);
+    });
+
+    it('gives the SDK no hook when every mutating tool is repeatable', () => {
+      const { prepare } = setup(readTool, repeatableWriteTool);
+
+      expect(prepare).toBeUndefined();
+    });
   });
 });

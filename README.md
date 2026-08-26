@@ -12,6 +12,8 @@ An AI chat assistant inside the Strapi v5 admin panel, plus an MCP tool server t
 - **MCP built in.** Registers its tools onto Strapi's official `/mcp` endpoint for Claude Desktop and other clients.
 - **Extensible.** Other plugins contribute tools through a small service contract.
 - **Guardrails.** Prompt-injection screening on chat input.
+- **Shows you the budget.** A context badge reports how much of the model's window the conversation is using, which is the failure that otherwise looks like broken tool calling.
+- **Shows the thinking.** Reasoning models stream their reasoning into a collapsible panel instead of pausing silently.
 
 ---
 
@@ -234,19 +236,29 @@ Two more things that surprise people:
 
 ### Registering your own provider
 
-Any [AI SDK provider](https://ai-sdk.dev/providers/ai-sdk-providers) works:
+Any [AI SDK provider](https://ai-sdk.dev/providers/ai-sdk-providers) works.
+Register it from your app through the plugin's `provider` service:
 
 ```typescript
-import { AIProvider } from 'strapi-plugin-ai-sdk/server/lib/ai-provider';
+// src/index.ts
 import { createMistral } from '@ai-sdk/mistral';
 
-AIProvider.registerProvider('mistral', ({ apiKey, baseURL }) => {
-  const provider = createMistral({ apiKey, baseURL });
-  return (modelId: string) => provider(modelId);
-});
+export default {
+  register({ strapi }) {
+    strapi.plugin('ai-sdk').service('provider').register(
+      'mistral',
+      ({ apiKey, baseURL }) => {
+        const provider = createMistral({ apiKey, baseURL });
+        return (modelId: string) => provider(modelId);
+      },
+    );
+  },
+};
 ```
 
-The two built-ins are registered through this same call, so nothing about them is privileged.
+Then set `provider: 'mistral'` in the plugin config.
+
+The two built-ins are registered through this same call, so nothing about them is privileged. Registration works from `register()` or `bootstrap()` in any order relative to the plugin's own lifecycle, because the provider is resolved lazily on first model use rather than at boot.
 
 ---
 
@@ -260,6 +272,9 @@ The same actions gate two different callers:
 - Granted on an **admin token**, they decide what that token exposes over `/mcp`.
 
 An ungranted tool is invisible rather than merely blocked. It never appears in `tools/list`, and the chat model is never offered it.
+
+> Upgrading from a version before 1.2.0? The old `plugin::ai-sdk.mcp.read/.write/.destructive/.maintenance` actions no longer exist, and Strapi prunes grants whose action id is gone. Tools must be re-granted individually, or every client sees an empty tool list with no error.
+
 ---
 
 ## Connecting an MCP client
@@ -330,15 +345,20 @@ The tool's permission appears under your plugin's own section, and starts ungran
 | Option | Default | Notes |
 |---|---|---|
 | `apiKey` | | Provider API key. Not required for most local runtimes. |
+| `anthropicApiKey` | | **Deprecated.** Fallback for existing installs; warns once at boot. Use `apiKey`. |
 | `provider` | `anthropic` | `anthropic`, `openai-compatible`, or one you registered. |
-| `baseURL` | | Required for `openai-compatible`. |
+| `baseURL` | | Required for `openai-compatible`. An empty string is treated as unset. |
 | `chatModel` | `claude-sonnet-5` | Model id. |
-| `systemPrompt` | | Supports a `{tools}` placeholder. |
+| `systemPrompt` | | Replaces the default preamble. Supports a `{tools}` placeholder. Tool-use rules are appended regardless, so setting this cannot drop them. |
 | `maxOutputTokens` | `8192` | Lower it with care on reasoning models. |
 | `maxConversationMessages` | `15` | History kept per request. |
 | `maxSteps` | `10` | Tool-call rounds per response. |
+| `toolTimeoutMs` | `60000` | Abandon a single tool call after this long, so a hung tool fails legibly instead of freezing the turn. `0` waits forever. |
+| `contextWindow` | | Tokens the model can actually read. Only needed when detection cannot work it out — see the context badge in the chat toolbar. |
 | `temperature`, `topP`, `topK` | | Omitted unless set. Anthropic rejects `temperature`; `openai-compatible` drops `topK`. |
 | `guardrails` | enabled | See [docs/guardrails.md](./docs/guardrails.md). |
+
+`frequencyPenalty`, `presencePenalty`, `seed` and `providerOptions` are also forwarded when set, and omitted entirely otherwise.
 
 ---
 
@@ -364,9 +384,12 @@ npm run test:ts:front
 
 ## Documentation
 
-- [Architecture](./docs/architecture.md): system design, data flows, permission model
-- [Plugin contract](./docs/plugin-contract.md): the `ai-tools` service, tool definitions, namespacing
+- [Architecture](./docs/architecture.md): lifecycle, tool pipeline, permission model, storage, context budget
+- [Plugin contract](./docs/plugin-contract.md): the `ai-tools` service, tool definitions, Zod rules, namespacing
 - [Guardrails](./docs/guardrails.md): screening, patterns, and what is not covered
+- [Sending email](./docs/sending-emails-with-resend.md): the `sendEmail` tool and provider setup
+
+Superseded documents are kept unchanged under [`docs/old/`](./docs/old/).
 
 ---
 

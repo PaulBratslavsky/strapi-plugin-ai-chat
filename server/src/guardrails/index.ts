@@ -43,19 +43,20 @@ export function loadPatterns(config?: GuardrailConfig): RegExp[] {
 }
 
 /**
- * Detect route type and extract user input text from the request body
+ * Extract the text to screen from a chat request.
+ *
+ * `POST /chat` is the only route this plugin guards, and the only one it has
+ * that carries user prose. The anonymous surface — `/chat`, `/ask`,
+ * `/ask-stream`, `/widget.js` — lives in strapi-plugin-ai-sdk-public-chat,
+ * which ships its own copy of these guardrails rather than borrowing these.
+ * Deliberately so: a plugin that depends on this one should not require this
+ * one to know its route paths.
  */
 export function extractUserInput(ctx: Context): { text: string; route: string } | null {
   const path = ctx.path;
   const method = ctx.method;
   const body = ctx.request.body as Record<string, unknown> | undefined;
 
-  // Chat route — extract last user message text.
-  //
-  // This plugin no longer serves any anonymous surface; that lives in
-  // strapi-plugin-ai-sdk-public-chat, which ships its own guardrails rather
-  // than borrowing these. Deliberately so: a plugin that depends on this one
-  // should not require this one to know its route paths.
   if (path.endsWith('/chat') && method === 'POST') {
     const route = 'chat';
     if (body && Array.isArray(body.messages)) {
@@ -80,14 +81,6 @@ export function extractUserInput(ctx: Context): { text: string; route: string } 
           return { text: msg.content, route };
         }
       }
-    }
-    return null;
-  }
-
-  // /ask or /ask-stream — extract prompt field
-  if ((path.endsWith('/ask') || path.endsWith('/ask-stream')) && method === 'POST') {
-    if (body && typeof body.prompt === 'string') {
-      return { text: body.prompt, route: path.endsWith('/ask-stream') ? 'ask-stream' : 'ask' };
     }
     return null;
   }
