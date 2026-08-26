@@ -48,12 +48,11 @@ const guardrail = (
 
     const reason = result.reason ?? guardrailConfig?.blockedMessage ?? DEFAULT_BLOCKED_MESSAGE;
 
-    if (route === 'chat' || route === 'public-chat') {
-      respondWithChatMessage(ctx, reason);
-    } else {
-      ctx.status = 403;
-      ctx.body = { error: 'Request blocked by guardrails', reason };
-    }
+    // Always the chat shape, because `/chat` is the only route this middleware
+    // is attached to and the only one extractUserInput recognises. A 403 would
+    // surface in the panel as a failed request with no explanation, which
+    // reads as a bug rather than a refusal.
+    respondWithChatMessage(ctx, reason);
   };
 };
 

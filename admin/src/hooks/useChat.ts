@@ -100,7 +100,7 @@ export function useChat(options?: UseChatOptions) {
     id: conversationId ?? 'new',
   });
 
-  const { messages, setMessages, sendMessage: sdkSendMessage, status, error } = chat as any;
+  const { messages, setMessages, sendMessage: sdkSendMessage, stop: sdkStop, status, error } = chat as any;
 
   // Seed explicitly rather than through the `messages` option.
   //
@@ -137,10 +137,25 @@ export function useChat(options?: UseChatOptions) {
 
   const clearMessages = useCallback(() => setMessages([]), [setMessages]);
 
+  /**
+   * Abandon the turn in progress.
+   *
+   * Aborts the request, which closes the stream. The server watches for that
+   * and cancels generation on its side, so this stops the work rather than
+   * just looking away from it. Whatever streamed in before the stop stays in
+   * the conversation — a half-written answer is more useful than none, and it
+   * records which tools had already run.
+   */
+  const stop = useCallback(() => {
+    if (!isLoading) return;
+    sdkStop?.();
+  }, [isLoading, sdkStop]);
+
   return {
     messages: messages as Message[],
     setMessages,
     sendMessage,
+    stop,
     clearMessages,
     isLoading,
     // The SDK surfaces a real Error here — including the provider's own

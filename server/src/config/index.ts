@@ -11,6 +11,8 @@ export default {
     maxOutputTokens: 8192,
     maxConversationMessages: 15,
     maxSteps: 10,
+    // Abandon a single tool call after this long. 0 disables the timeout.
+    toolTimeoutMs: 60_000,
     guardrails: {
       enabled: true,
       maxInputLength: 10000,
@@ -29,6 +31,12 @@ export default {
     }
     if (c.chatModel && typeof c.chatModel !== 'string') {
       throw new Error('chatModel must be a string');
+    }
+    if (
+      c.toolTimeoutMs !== undefined &&
+      (typeof c.toolTimeoutMs !== 'number' || c.toolTimeoutMs < 0)
+    ) {
+      throw new Error('toolTimeoutMs must be a non-negative number (0 disables the timeout)');
     }
     if (c.provider && typeof c.provider !== 'string') {
       throw new Error('provider must be a string');

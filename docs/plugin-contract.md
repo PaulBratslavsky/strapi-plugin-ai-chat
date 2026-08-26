@@ -1,533 +1,495 @@
-# Plugin Contract
+# Plugin contract
 
-**Status:** Source of truth as of `v1.1.0`.
-**Audience:** anyone writing or maintaining an extension plugin for
-`strapi-plugin-ai-sdk` (e.g. `strapi-plugin-ai-sdk-yt-transcripts`,
-`strapi-plugin-ai-sdk-yt-embeddings`), and anyone debugging why a tool
-did not show up in the admin chat, the public widget, or MCP.
+How another Strapi plugin contributes tools to `strapi-plugin-ai-sdk`, and what
+it can rely on. Current as of **2.6.0**.
 
-This document supersedes the tool-contract portions of
-[`mcp-consolidation.md`](./mcp-consolidation.md) and
-[`tool-standardization-spec.md`](./tool-standardization-spec.md). Those are
-kept for their historical rationale (why the hub/extension split was chosen
-over standalone MCP servers) but are no longer the place to look for the
-current contract, namespacing rules, Zod rules, or MCP permission tiers.
+This is the single reference for extension plugins. It replaces
+`tool-standardization-spec.md`, `plugin-tool-discovery.md` and
+`mcp-consolidation.md`, which were pre-implementation proposals for work that
+has since shipped; they are kept unchanged under [`docs/old/`](./old/) for their
+historical rationale.
+
+Audience: anyone writing an extension plugin, and anyone debugging why a tool
+did not show up in chat or in `tools/list`.
+
+## Contents
+
+- [Requirements](#requirements)
+- [Why extensions rather than separate MCP servers](#why-extensions-rather-than-separate-mcp-servers)
+- [The `ai-tools` service](#the-ai-tools-service)
+- [The `ToolDefinition` interface](#the-tooldefinition-interface)
+- [Zod rules](#zod-rules)
+- [Namespacing](#namespacing)
+- [Permissions](#permissions)
+- [Failure isolation](#failure-isolation)
+- [Version compatibility](#version-compatibility)
+- [Building an extension plugin](#building-an-extension-plugin)
+- [Naming conventions](#naming-conventions)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
-## 1. Requirements
+## Requirements
 
-- **Strapi >= 5.47.0** — the official MCP server (`strapi.ai.mcp`) does not
-  exist below this version. `strapi.ai` is simply absent.
-- The **host application** must set `mcp: { enabled: true }` in its own
-  `config/server.ts`. No plugin — ai-sdk included — can turn this on from
-  inside a plugin; it is a host-level opt-in.
+- **Strapi >= 5.47.0.** The official MCP server (`strapi.ai.mcp`) does not exist
+  below it — `strapi.ai` is simply absent.
+- **The host app must opt in to MCP.** No plugin can turn this on from inside a
+  plugin:
 
-```ts
-// <strapi-app>/config/server.ts
-export default ({ env }) => ({
-  host: env('HOST', '0.0.0.0'),
-  port: env.int('PORT', 1337),
-  mcp: {
-    enabled: true,
-  },
-  // ...
-});
+  ```typescript
+  // config/server.ts
+  export default ({ env }) => ({
+    host: env('HOST', '0.0.0.0'),
+    port: env.int('PORT', 1337),
+    mcp: { enabled: true },
+  });
+  ```
+
+  Without it the plugin registers no tool permissions at all, which leaves
+  **admin chat** with no tools either — not just MCP. This surprises people, so
+  it is worth stating twice.
+
+- **Zod 4** (`zod@^4.3.5`), matching what this plugin ships.
+
+---
+
+## Why extensions rather than separate MCP servers
+
+A plugin wanting to expose tools to an AI client has two options: ship its own
+MCP server, or contribute tools to this one. This project standardised on the
+second, and the reasoning is worth knowing because it explains the shape of
+everything below.
+
+A standalone server means the user configures another endpoint, mints another
+token, and runs another transport. Their client then holds N connections to one
+Strapi instance, each with its own auth and its own tool namespace, and the
+model has no way to use a transcript tool and a content tool in the same step
+without the client federating them.
+
+Contributing tools means one endpoint, one token, one permission grid, and one
+registry the model sees as a single toolbox. The cost is a service contract to
+conform to — the rest of this document.
+
+The tradeoff flips if your tools have nothing to do with Strapi's content. A
+tool that never touches `strapi.documents()` gains little from living here.
+
+---
+
+## The `ai-tools` service
+
+At boot, `strapi-plugin-ai-sdk` iterates every other installed plugin and looks
+for a service named exactly `ai-tools`:
+
+```typescript
+strapi.plugin(pluginName)?.service?.('ai-tools')
 ```
 
-If either condition is unmet, `registerAiSdkMcpTools()`
-(`server/src/mcp/index.ts`) logs
-`[ai-sdk:mcp] Official MCP server not enabled — skipping tool registration.`
-and returns. The admin chat and public widget are unaffected — only MCP
-exposure is skipped.
+### `getTools()` — required
 
----
+Returns an array of `ToolDefinition`. Called once, at boot.
 
-## 2. The `ai-tools` service contract
-
-An extension plugin contributes tools to ai-sdk by exposing a Strapi service
-named exactly `ai-tools`. `ai-sdk`'s `bootstrap()` scans every other
-registered plugin (`discoverPluginTools()` in `server/src/bootstrap.ts`) and,
-for each one, looks up `strapi.plugin(pluginName).service('ai-tools')`.
-
-```ts
+```typescript
 // server/src/services/ai-tools.ts
 import { tools } from '../tools';
 
 export default () => ({
   getTools() {
-    return tools; // ToolDefinition[]
-  },
-
-  // Optional
-  getMeta() {
-    return {
-      label: 'YouTube Transcripts',
-      description: 'Fetch, search, list, and read YouTube video transcripts',
-      keywords: ['/youtube', '/yt', 'transcript', 'video'],
-    };
+    return tools;
   },
 });
 ```
 
-### `getTools()` — required
-
-Returns an array of `ToolDefinition` objects (see §3). Anything in the array
-missing `name`, `execute`, or `schema` is skipped with a warning; it does not
-abort discovery for the rest of the plugin's tools.
+It must be synchronous and must not throw. Returning something that is not an
+array is ignored silently.
 
 ### `getMeta()` — optional
 
-Returns `{ label, description, keywords? }`. This is **not** consumed as MCP
-server `instructions` (the official server has no such hook — see §7). It is
-collected during discovery and only feeds the `strapi://ai-sdk/tools/guide`
-MCP resource (`server/src/mcp/resources/tool-guide.ts`), where it becomes the
-section heading and blurb for that plugin's tools. A client only sees it after
-reading the resource, which typically happens after the server is already
-active — read §7 before assuming this replaces routing hints.
+Describes the tool source for humans and for the tool-guide MCP resource:
 
-`getMeta()` is only recorded if the plugin registered at least one tool
-successfully **and** both `label` and `description` are present.
+```typescript
+getMeta() {
+  return {
+    label: 'YouTube Transcripts',
+    description: 'Fetch, search, list, and read YouTube video transcripts',
+    keywords: ['/youtube', '/yt', 'transcript', 'video'],
+  };
+}
+```
 
-### Failure isolation is two-layered
+Only stored when **both** `label` and `description` are present, and only when
+at least one tool registered successfully. `keywords` are trigger hints a user
+might type.
 
-The skip-and-warn behavior above (discovery time, in `bootstrap.ts`) has a
-counterpart at MCP-registration time, in `server/src/mcp/`:
-
-- **Per-tool** (`register-tools.ts`): each tool's `mcp.registerTool()` call
-  is individually wrapped in try/catch — one tool failing (e.g. a name
-  collision with a Strapi-derived built-in) is skipped with a warning; the
-  rest still register.
-- **Whole-pass** (`mcp/index.ts`): `registerAiSdkMcpTools()` wraps admin
-  permission registration, tool registration, and resource registration in
-  one outer try/catch. An unexpected throw anywhere in that block is caught,
-  logged at `strapi.log.error`, and **not rethrown** — Strapi still finishes
-  booting; only MCP capability registration is affected. This outer catch is
-  not transactional: tools already registered via `mcp.registerTool()`
-  before a later failure stay registered.
-
-Full detail, including why the outer catch isn't transactional:
-[`architecture.md`](./architecture.md#mcp-server).
+This is not injected into the system prompt. The official MCP server does not
+let plugins set server-level `instructions`, so source metadata surfaces in the
+tool guide resource at `strapi://ai-sdk/tools/guide` instead.
 
 ---
 
-## 3. The `ToolDefinition` interface
+## The `ToolDefinition` interface
 
-```ts
-// server/src/lib/tool-registry.ts
-export interface ToolDefinition {
-  name: string;
-  description: string;
+```typescript
+interface ToolDefinition {
+  name: string;          // camelCase, [a-zA-Z0-9_-] only
+  description: string;   // what the model reads to decide whether to call it
   schema: z.ZodObject<any>;
-  execute: (args: any, strapi: Core.Strapi, context?: ToolContext) => Promise<unknown>;
-
-  /** If true, tool is only available in AI SDK chat, not exposed via MCP. */
-  internal?: boolean;
-
-  /** If true, tool is safe for unauthenticated public chat (read-only). */
-  publicSafe?: boolean;
-
-  /**
-   * MCP permission tier. Defaults to 'read' when publicSafe is true,
-   * otherwise 'write'. Set explicitly for tools whose risk does not match
-   * that default — e.g. irreversible or external-side-effect tools, or
-   * tools that hit a paid external API per call and belong in
-   * 'maintenance' regardless of whether they mutate anything.
-   */
+  execute: (args, strapi, context?) => Promise<unknown>;
+  internal?: boolean;    // chat only, never exposed over MCP
+  publicSafe?: boolean;  // risk metadata only — grants nothing
   access?: 'read' | 'write' | 'destructive' | 'maintenance';
 }
 ```
 
-- **`internal`** — tools with `internal: true` never reach MCP, regardless of
-  `access` or `publicSafe`. `ToolRegistry.getPublic()` filters them out before
-  `registerToolsOnMcp()` ever sees them. Use this for chat-only tools (the
-  built-in memory/notes/task tools all set it).
-- **`publicSafe`** — orthogonal to `internal`. It means "safe for the
-  read-only and low-risk," and it feeds the `access` default (see §4). Since
-  2.0.0 it grants nothing on its own: anonymous chat moved to
-  `strapi-plugin-ai-sdk-public-chat`, which defines its own read-only tools
-  rather than filtering these by a flag. A tool can still be
-  `publicSafe: true` and `internal: true` (e.g. `recallPublicMemories`) —
-  low-risk, but never exposed on MCP.
-- **`access`** — resolves to an MCP permission action. See §4. `maintenance`
-  is never derived from `publicSafe`/absence — it is only ever set explicitly,
-  because "this is expensive to run" isn't inferable the way "this is
-  read-only" is from `publicSafe`.
+`name`, `description`, `schema` and `execute` are all required; a definition
+missing any of the first three is skipped with a warning. (`execute` is checked
+too — a definition without it never registers.)
 
-### Where the built-in tools land
+> **You cannot import this type.** `strapi-plugin-ai-sdk/strapi-server` resolves
+> to a bundle whose only export is the Strapi plugin object itself
+> (`module.exports = index`). `ToolDefinition`, its alias
+> `AiToolContribution`, and the `jsonCoercible` helper all exist in this
+> plugin's source but are not reachable from the package entry.
+>
+> Discovery is duck-typed, so this costs you nothing at runtime. Declare the
+> interface in your own plugin and let structural typing line it up — which is
+> what the existing extension plugins do. Keep the copy in one file so there is
+> a single place to update when this contract changes.
 
-Eight of the fourteen built-in tools are non-`internal` and therefore reach
-MCP:
+**`description` is the most important field you write.** It is what the model
+reads when deciding between your tool and `searchContent`. Say what it does,
+when to prefer it, and what it costs. Descriptions are concatenated into the
+system prompt for every request, so keep them dense rather than long.
 
-| Tool (registry name) | MCP name | `access` |
-|---|---|---|
-| `listContentTypes` | `list_content_types` | read (`publicSafe`) |
-| `searchContent` | `search_content` | read (`publicSafe`) |
-| `findOneContent` | `find_one_content` | read (`publicSafe`) |
-| `aggregateContent` | `aggregate_content` | read (`publicSafe`) |
-| `createContent` | `create_content` | write (default) |
-| `updateContent` | `update_content` | write (default) |
-| `uploadMedia` | `upload_media` | write (default) |
-| `sendEmail` | `send_email` | destructive (explicit `access: 'destructive'`) |
+### `access` and `publicSafe`
 
-None of the eight call a paid external API per invocation, so none sit in
-`maintenance` today — that tier is populated entirely by the YouTube
-extension plugins (see below).
+`publicSafe` no longer grants anything. It used to decide what anonymous chat
+could reach, which failed open — an author forgetting the flag was the only
+thing between a visitor and a write tool.
 
-`saveMemory`, `recallMemories`, `saveNote`, `recallNotes`, `manageTask`, and
-`recallPublicMemories` are all `internal: true` and stay chat-only.
+Both fields are now risk metadata, feeding `tierFor()`:
+
+```
+access ?? (publicSafe ? 'read' : 'write')
+```
+
+That tier does two things: it labels the tool in the permissions grid to help a
+human decide what to tick, and it decides whether the tool is **withdrawn after
+a successful call** (see [architecture.md](./architecture.md#withdrawing-a-tool-after-a-write)).
+Anything not tiered `read` is withdrawn once it returns a result, so the model
+cannot repeat a write it has already completed.
+
+Mark genuinely read-only tools `publicSafe: true` — otherwise they default to
+`write` and get withdrawn after one call, which will look like your tool
+stopping halfway through a task.
+
+Use `access: 'maintenance'` for a tool that is read-only but expensive: one that
+spends money, calls a paid external API, or runs long enough that a token holder
+could loop it. It is never derived, only set explicitly.
 
 ---
 
-## 4. Per-tool permissions
+## Zod rules
 
-> **Superseded:** earlier revisions of this document described four coarse
-> tier actions (`plugin::ai-sdk.mcp.read`/`.write`/`.destructive`/
-> `.maintenance`). Those actions no longer exist. Permissions are now **one
-> action per tool**. If you are following an older guide, the tier ids it
-> names cannot be granted.
+Schemas are handed to the official MCP server untouched. It detects Zod 4 by
+duck-typing and converts with its own bundled `zod/v4-mini`. No conversion layer
+sits in between, and adding one would strip `.describe()` text.
 
-Every custom tool is gated behind an admin permission `action` string on
-`auth.policies`. A caller only sees a tool in `tools/list` if it holds that
-action — gating filters discovery, not just execution.
+**Describe every parameter.** The description is most of what tells a model how
+to call the tool:
 
-ai-sdk registers **one action per registered tool**
-(`server/src/mcp/permissions.ts`), under `section: 'plugins'`, with
-`pluginName` set to the **owning plugin**:
-
-```
-plugin::<owning-plugin>.tool.<slug>
-
-plugin::ai-sdk.tool.search-content
-plugin::ai-sdk.tool.send-email
-plugin::ai-sdk-yt-transcripts.tool.fetch-transcript
+```typescript
+schema: z.object({
+  videoId: z.string().describe('YouTube video ID, 11 characters'),
+  language: z.string().optional().describe('ISO 639-1 code, defaults to en'),
+})
 ```
 
-Built-ins are owned by `ai-sdk`; a tool contributed by another plugin is
-owned by that plugin. The practical effect: **a plugin's tool permissions
-appear under that plugin's own section** in the roles grid rather than being
-buried under ai-sdk. ai-sdk discovers the tools; the owning plugin owns the
-permissions. A plugin therefore stays lean — responsible only for its own
-tools — and uninstalling it takes its actions with it.
+**Use `.optional()` rather than `.default()`** where the model should be able to
+omit a parameter. Defaults are applied after validation and do not always appear
+in the emitted JSON Schema the way you expect.
 
-### Slug rules
+**Make array and object parameters tolerant of JSON strings** if MCP clients
+will call the tool. Clients — notably through `mcp-remote` — sometimes send
+complex arguments as JSON text: `fields: '["title","slug"]'` instead of
+`fields: ["title"]`. The official server validates arguments **before** your
+handler runs, so a rescue inside `execute` is too late; it has to live in the
+schema.
 
-`toActionSlug()` maps the bare MCP name to the uid segment, replacing
-underscores with **hyphens**. This is not cosmetic: Strapi's uid validator
-rejects underscores, and a violation is only caught at boot, not by
-type-checking. So the same tool carries two encodings:
+This plugin uses a helper called `jsonCoercible` for that. It is not exported
+from the package, so copy it — it is six lines:
 
-| | Example |
-|---|---|
-| MCP wire name | `ai_sdk_yt_transcripts__fetch_transcript` |
-| Permission uid | `plugin::ai-sdk-yt-transcripts.tool.fetch-transcript` |
-
-Always derive ids with `actionForTool()` — never hand-build them.
-
-### Two audiences, one action registry
-
-The same actions gate both consumers; what differs is who you grant them to:
-
-| Audience | Granted on | Enforced in |
-|---|---|---|
-| Admin using chat in Strapi | **RBAC role** (Settings → Roles) | `createTools()` filters by `ctx.state.userAbility` |
-| External MCP client | **Admin API token** | Strapi checks each tool's `auth.policies` |
-
-Both of Strapi's admin auth strategies put a CASL ability on
-`ctx.state.userAbility` — the session strategy from the user's role, the
-`admin-token` strategy from the token's permission list — so one check
-covers both. See
-[`docs/architecture.md`](./architecture.md#the-permission-model).
-
-### `access` is now metadata only
-
-```ts
-export function tierFor(def: Tierable): AccessTier {
-  return def.access ?? (def.publicSafe ? 'read' : 'write');
+```typescript
+export function jsonCoercible<T extends z.ZodTypeAny>(schema: T): z.ZodType<z.infer<T>> {
+  return z.preprocess((value) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return value;
+    try { return JSON.parse(trimmed); } catch { return value; }
+  }, schema) as z.ZodType<z.infer<T>>;
 }
 ```
 
-`tierFor()` still exists and `access` is still worth declaring, but neither
-grants anything any more. They are **risk metadata** — useful for sorting a
-long grid and for deciding what to tick, not a permission boundary.
-
-This makes the old footgun much less sharp. Under tiers, a mis-declared
-`access` silently widened what a `read`-granted token could reach. Now each
-tool is ticked individually, so a wrong `access` value misleads a human
-reading the list but cannot itself grant access to anything.
-
-Declaring it accurately still matters for the reader: `publicSafe` means
-"safe to expose to anonymous public chat" — not "does not write" and not
-"cheap to run." Tools like `fetchTranscript` (writes a document, hits
-YouTube) and `searchYtKnowledge` (costs money per call via OpenAI `embed()`)
-should still declare `access` explicitly so the risk is visible at a glance.
-
-### Registering the actions
-
-`registerMcpAdminPermissions()` runs on every boot, from
-`registerAiSdkMcpTools()`, via
-`strapi.service('admin::permission').actionProvider.registerMany(...)`. It is
-idempotent — safe to run every boot — and must complete before tools are
-registered, since each tool's `auth.policies` references one of these ids.
-
-To scope an **external MCP client**: Settings → Administration Panel → API
-Tokens, create/edit an admin token, and tick the individual tools it should
-reach under each plugin's section.
-
-To scope an **admin's in-Strapi chat**: Settings → Administration Panel →
-Roles, edit the role, and tick tools there instead.
-
-> Note that actions are pruned when they stop being registered. Removing a
-> tool — or the plugin that contributed it — removes its action, and Strapi
-> drops any grants that referenced it. A brand-new tool likewise starts
-> **ungranted** and is invisible to every role and token until ticked.
-
----
-
-## 5. Namespacing
-
-Two separate transformations run in sequence: registry namespacing (adds a
-prefix), then MCP name conversion (snake_cases everything).
-
-### Registry namespacing (`discoverPluginTools()` in `bootstrap.ts`)
-
-```ts
-const safeName = pluginName.replace(/[^a-zA-Z0-9_-]/g, '_');
-const namespacedName = `${safeName}__${tool.name}`;
+```typescript
+schema: z.object({
+  fields: jsonCoercible(z.array(z.string())).optional()
+    .describe('Fields to return'),
+})
 ```
 
-`pluginName` is the Strapi plugin id (e.g. `ai-sdk-yt-transcripts`, not the
-npm package name `strapi-plugin-ai-sdk-yt-transcripts`). The sanitizer's
-character class **allows hyphens**, so a hyphenated plugin id keeps its
-hyphens in the registry key: `ai-sdk-yt-transcripts__fetchTranscript`.
+`z.preprocess` rather than a union is deliberate: it coerces at parse time while
+still emitting the wrapped schema's own JSON Schema, so clients keep seeing a
+typed parameter — a union would emit `anyOf` and would not coerce. It only
+touches strings starting with `{` or `[`, leaving genuine string values like
+`populate: "*"` alone, and a malformed JSON string falls through to the wrapped
+schema's own validation error.
 
-### MCP name conversion (`toSnakeCase()` in `mcp/naming.ts`)
+**Do not set `additionalProperties` or tool annotations.** The official server
+owns schema emission; anything you set there is discarded.
 
-```ts
-export function toSnakeCase(str: string): string {
-  return str
-    .replace(/:/g, '__')
-    .replace(/-/g, '_')
-    .replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+**The top level must be a `ZodObject`.** Not a union, not an array.
+
+### Honour the abort signal
+
+`execute` receives a `context` carrying an `abortSignal`. It fires when the user
+stops the turn, or when your tool exceeds `toolTimeoutMs` (default 60s).
+
+```typescript
+async execute(args, strapi, context) {
+  const res = await fetch(url, { signal: context?.abortSignal });
+  return res.json();
 }
 ```
 
-This runs only when a tool is handed to `mcp.registerTool()` — it converts
-**both** the hyphens from the namespace prefix **and** the camelCase of the
-tool's own name:
+Honouring it is optional but strongly worth doing for anything making a network
+call. A tool that ignores it still gets abandoned on timeout — the turn is freed
+regardless — but the underlying request keeps running to completion in the
+background, into nothing.
 
-```
-ai-sdk-yt-transcripts__fetchTranscript
-  → toSnakeCase →
-ai_sdk_yt_transcripts__fetch_transcript
-```
-
-### The naming asymmetry (not a bug)
-
-Registry keys keep hyphens; MCP tool names use underscores throughout. This
-looks inconsistent at a glance but is intentional: the registry key is an
-internal identifier (also used for admin-UI tool source grouping and log
-lines), while the MCP tool name must satisfy the MCP protocol's naming
-convention and match Strapi's own built-in tools (`list_article`,
-`get_article`). Don't "fix" the registry key to use underscores — that would
-just move the asymmetry, not remove it, since `toSnakeCase()` treats `-` and
-camelCase identically either way.
+Anything without its own timeout is what makes a chat freeze rather than fail:
+a spinner on a tool that never settles, and no error to explain it.
 
 ---
 
-## 6. Zod rules
+## Namespacing
 
-**Always** `import { z } from 'zod'` in tool schemas — your own package's Zod
-4 dependency. **Never** `import { z } from '@strapi/utils'`.
+A contributed tool is registered under its source plugin's name:
 
-Both are Zod 4 (Strapi's `@strapi/utils` re-exports `zod/v4`), so this is not
-a version-compatibility problem. It is an **instance-identity** problem: Zod
-4 stores `.describe()` text in a per-instance global registry, and the MCP
-SDK's schema-to-JSON-Schema converter reads that registry using *its own*
-zod instance. A schema built with a *different* zod instance's builder
-functions (e.g. `@strapi/utils`'s re-exported `z`) is invisible to the SDK's
-registry lookup — every parameter description is silently dropped. The tool
-still registers, still works, and still validates arguments correctly; it
-just ships with an empty `description` field on every parameter in
-`tools/list`, degrading the model's ability to call it correctly.
+```
+<safePluginName>__<toolName>
+```
 
-```ts
-// Correct — plugin's own zod
+where `safePluginName` is the Strapi plugin id with every character outside
+`[a-zA-Z0-9_-]` replaced by `_`. So `fetchTranscript` from a plugin whose id is
+`ai-sdk-yt-transcripts` becomes `ai-sdk-yt-transcripts__fetchTranscript`.
+
+Double underscore is the separator because tool names are restricted to that
+character class, so it cannot collide with a camelCase name.
+
+Built-in tools carry no prefix.
+
+That one registry name is then transformed three ways, and the differences are
+deliberate:
+
+| Context | Form | Example |
+|---|---|---|
+| Registry | camelCase, `__`-prefixed | `ai-sdk-yt-transcripts__fetchTranscript` |
+| MCP tool name | snake_case | `ai_sdk_yt_transcripts__fetch_transcript` |
+| Admin action | hyphens, prefix stripped | `plugin::ai-sdk-yt-transcripts.tool.fetch-transcript` |
+
+MCP names are snake_case to match Strapi's own built-in tools. Action slugs use
+hyphens because Strapi's admin action uid validator accepts only lowercase
+letters, dots and hyphens — no underscores. The source prefix is stripped from
+the action because the plugin section already identifies the source; repeating
+it would give you
+`plugin::ai-sdk.tool.ai-sdk-yt-transcripts__fetch-transcript`.
+
+**Name collisions are skipped, not overwritten.** Two plugins can both expose a
+`search` tool without clashing, since the prefix disambiguates them. A duplicate
+*within* one plugin logs a warning and the second is dropped.
+
+---
+
+## Permissions
+
+Every non-`internal` tool gets its own admin action, registered under **the
+contributing plugin's own section** of the permissions grid, grouped in the
+subcategory **AI tools**:
+
+```
+plugin::<your-plugin-id>.tool.<action-slug>
+```
+
+The same action gates two callers: granted on a **role** it decides what that
+admin's chat can use; granted on an **admin token** it decides what that token
+exposes over `/mcp`.
+
+**Every tool starts ungranted.** Super Admin is granted everything
+automatically; every other role begins with nothing. An ungranted tool is
+invisible rather than blocked — absent from `tools/list`, never offered to the
+chat model.
+
+`internal: true` tools get no action at all and are exempt from the check,
+because an action that was never registered cannot be granted to anyone,
+including Super Admin. Use `internal` only for bookkeeping scoped to the calling
+admin's own data.
+
+---
+
+## Failure isolation
+
+Two layers, so one broken plugin cannot take down the others or the host.
+
+**At discovery.** Each plugin's `getTools()` call is individually wrapped. A
+throw is caught and logged as `Tool discovery failed for <plugin>`, and the scan
+continues to the next plugin. Malformed definitions are skipped individually.
+
+**At MCP registration.** Each `registerTool()` call is individually wrapped. The
+capability registry throws synchronously on conflicts — a duplicate name across
+plugins, a missing auth policy — and one bad tool must not take down the
+registration pass or Strapi's boot. Failures skip and continue with a warning
+naming the tool.
+
+Beyond both, the whole MCP branch of `bootstrap()` sits in an outer try/catch,
+so even a host shape change in `strapi.ai` degrades to "MCP tools unavailable"
+rather than a failed boot.
+
+At runtime, a tool that throws is caught in `createTools()` and rethrown through
+`describeToolFailure()`, which flattens Strapi's `details.errors` into the
+message so the model can read which field failed and why. Throw real errors with
+useful messages — they are shown to the model, and a good one is the difference
+between a corrected retry and a fabricated success.
+
+---
+
+## Version compatibility
+
+Declare a peer dependency:
+
+```json
+"peerDependencies": {
+  "strapi-plugin-ai-sdk": "^2.0.0"
+}
+```
+
+At discovery, `checkPluginCompat()` compares that range against the running
+version and warns on a mismatch:
+
+```
+[ai-sdk] Plugin "ai-sdk-yt-transcripts" requires strapi-plugin-ai-sdk ^1.1.0
+but 2.6.0 is installed. Its tools may not register correctly — upgrade one of
+the two packages.
+```
+
+It is a diagnostic, not a gate — tools register either way. The check handles
+`^1.1.0`, `>=0.7.0` and exact `1.1.0`; anything it cannot parse passes.
+
+---
+
+## Building an extension plugin
+
+### Structure
+
+```
+your-plugin/
+  server/src/
+    services/
+      ai-tools.ts       getTools() + optional getMeta()
+      index.ts          export it under the key 'ai-tools'
+    tools/
+      index.ts          barrel export
+      fetch-thing.ts    one file per tool
+  package.json
+```
+
+You do **not** need an MCP server, a transport, routes, controllers, or
+permission registration. All of that is handled for you.
+
+You **do** need the service registered under exactly the key `ai-tools`:
+
+```typescript
+// server/src/services/index.ts
+import aiTools from './ai-tools';
+
+export default { 'ai-tools': aiTools };
+```
+
+### A tool
+
+```typescript
+// server/src/tools/fetch-thing.ts
 import { z } from 'zod';
+import type { ToolDefinition } from './types'; // your own local copy
 
-export const mySchema = z.object({
-  city: z.string().describe('City name'), // description survives conversion
-});
-
-// Wrong — silently drops every .describe()
-import { z } from '@strapi/utils';
-```
-
-This is also why `zod` must **not** be listed in `bundledDependencies` — a
-bundled copy is a second instance, with the same identity problem.
-
-### `jsonCoercible()` — opting an array/object param into JSON-string tolerance
-
-The retired hand-rolled server had a generic `coerceArgs` step that
-JSON-parsed any stringified object/array argument, for *any* registered tool
-— including third-party ones — before validation. The official server
-validates arguments against the input schema **before** your handler runs,
-so there is no hook left to pre-parse anything generically. That tolerance is
-gone by default for every tool, including this plugin's own.
-
-`jsonCoercible()` (`server/src/lib/json-coercible.ts`) restores it on a
-**per-parameter, opt-in** basis by wrapping the schema itself:
-
-```ts
-import { z } from 'zod';
-import { jsonCoercible } from '../../lib/json-coercible';
-
-export const searchContentSchema = z.object({
-  contentType: z.string().describe('e.g. api::article.article'),
-  filters: jsonCoercible(z.record(z.string(), z.unknown()))
-    .optional()
-    .describe('Strapi filter object, e.g. { "title": { "$contains": "foo" } }'),
-  fields: jsonCoercible(z.array(z.string()))
-    .optional()
-    .describe('Fields to return, e.g. ["title", "slug"]'),
-});
-```
-
-It uses `z.preprocess`, not a `z.union`, deliberately: a union would emit
-`anyOf` in the generated JSON Schema and would not actually coerce anything.
-`z.preprocess` coerces at parse time while still emitting the wrapped
-schema's own JSON Schema, so the client keeps seeing a typed array/object
-parameter. Only strings that look like JSON (`{...}` or `[...]` after
-trimming) are touched, so genuine string values — `populate: "*"` — pass
-through untouched.
-
-Within this plugin, `jsonCoercible()` is applied to exactly 8 complex
-parameters across `createContent`, `updateContent`, `searchContent`,
-`findOneContent`, and `aggregateContent` (`data`, `filters`, `fields`,
-`populate`). **Third-party contributed tools taking object/array parameters
-get no automatic coercion** — if your extension plugin's tool accepts, say, a
-`tags: z.array(z.string())` parameter and expects to tolerate
-`mcp-remote` clients sending `tags: '["a","b"]'` as a JSON string, wrap it
-yourself with the same helper (copy the ~15-line function; it has no
-dependency on anything ai-sdk-specific).
-
-### `additionalProperties` and tool annotations are gone
-
-The deleted Zod→JSON-Schema converter hard-set `additionalProperties: false`
-on every schema and emitted `annotations: { readOnlyHint, destructiveHint }`
-per tool. Strapi's own tool-registration type has no `annotations` field —
-there is nowhere to put those hints anymore, and no equivalent for
-`additionalProperties`. The MCP permission tiers (§4) are the replacement for
-the semantic information `readOnlyHint`/`destructiveHint` used to carry;
-there is no replacement for `additionalProperties: false` — Zod 4's default
-JSON Schema output for `z.object()` does not set it.
-
----
-
-## 7. Server instructions are gone (partial mitigation only)
-
-There is no `instructions` hook anywhere in the official MCP service.
-Plugins cannot set the string an MCP client receives at `initialize` time.
-The retired server generated dynamic routing hints from every source's
-`getMeta()` (`/strapi — ...`, `/youtube — ...`) specifically because clients
-like Claude Desktop, under "load tools when needed," read `instructions` to
-decide **whether to activate the server at all** — before any tool call, and
-before any resource read.
-
-The mitigation is the `strapi://ai-sdk/tools/guide` resource
-(`server/src/mcp/resources/tool-guide.ts`), generated fresh on every read
-from the current registry contents plus each source's `getMeta()`. This is
-**not equivalent**: a resource is only readable *after* a client has already
-decided to activate the server and connect. If a client's activation
-heuristic depended on `instructions` content, that signal is gone, full
-stop. The resource only helps once a session already exists — e.g. an agent
-that reads it proactively to plan which tool to call next, or a human
-inspecting available capabilities via an MCP inspector.
-
-Treat this as a real, accepted regression, not a solved problem. If tool
-descriptions alone aren't earning attention from a "lazy-load tools" client,
-richer per-tool `description` text is the only remaining lever inside this
-plugin's control.
-
----
-
-## 8. The `yt-transcripts` content-type UID coupling — breaking-change hazard
-
-`strapi-plugin-ai-sdk-yt-embeddings` registers a `strapi.db.lifecycles.subscribe()`
-hook (`server/src/bootstrap.ts`) against a **hardcoded content-type UID**:
-
-```ts
-strapi.db.lifecycles.subscribe({
-  models: ['plugin::ai-sdk-yt-transcripts.transcript'],
-  async afterCreate({ result }) {
-    // embeds the new transcript into pgvector
+export const fetchThingTool: ToolDefinition = {
+  name: 'fetchThing',
+  description:
+    'Fetch a thing by id. Prefer this over searchContent when the caller ' +
+    'already knows the id — it is a single lookup rather than a query.',
+  schema: z.object({
+    id: z.string().describe('The thing id'),
+  }),
+  publicSafe: true,
+  async execute(args, strapi) {
+    return strapi.documents('plugin::your-plugin.thing').findOne({
+      documentId: args.id,
+    });
   },
-});
+};
 ```
 
-This is a string literal, not a lookup through any published API or version
-check. If `strapi-plugin-ai-sdk-yt-transcripts` ever renames its content type,
-changes its plugin id, or restructures the schema fields the hook reads
-(`videoId`, `title`, `fullTranscript`, `transcriptWithTimeCodes`), this
-subscription **silently stops firing**. There is no error, no warning at
-boot (the `try`/`catch` around subscription registration only guards against
-`yt-transcripts` being absent entirely, logging
-`"yt-transcript plugin not found, skipping YT lifecycle hook"` — it does not
-detect "plugin present, UID changed"). New transcripts simply stop being
-embedded, invisibly.
+### Checklist
 
-**If you maintain `yt-transcripts`:** treat renaming the `transcript`
-content type UID as a breaking change for `yt-embeddings`, and coordinate the
-version bump across both packages if you do it.
-
-**If you maintain `yt-embeddings`:** there is no current mechanism to detect
-this drift at boot. A tier-1 E2E assertion
-(`tests/e2e/structural.test.ts`, "cross-plugin wiring" describe block) pins
-that the UID exists and the lifecycle hook is registered against it, which at
-least turns a silent regression into a failing test — but only when the E2E
-suite is actually run (see §9).
+- [ ] Service registered under the key `ai-tools`
+- [ ] `getTools()` synchronous, returns an array, never throws
+- [ ] Every tool has `name`, `description`, `schema`, `execute`
+- [ ] `ToolDefinition` declared locally — it is not importable from the package
+- [ ] Every schema parameter has `.describe()`
+- [ ] Array/object parameters wrapped in a `jsonCoercible()` copy
+- [ ] Read-only tools marked `publicSafe: true` so they are not withdrawn after one call
+- [ ] Expensive tools marked `access: 'maintenance'`
+- [ ] `peerDependencies` declares a `strapi-plugin-ai-sdk` range
+- [ ] `zod@^4`
+- [ ] Tools tested directly, without booting Strapi
 
 ---
 
-## 9. E2E suites — unverified, prerequisites
+## Naming conventions
 
-`tests/e2e/` (this repo) contains two tiers, run with **vitest**:
-
-| Command | Cost | What it checks |
+| Thing | Convention | Example |
 |---|---|---|
-| `npm run test:e2e` | Free — structural only, no tool execution | `tools/list` shape, permission-tier scoping, `/tool-sources`, `.describe()` preservation, the tool-guide resource, the UID coupling (§8), tool-name collisions |
-| `E2E_LIVE=1 npm run test:e2e:live` | Real API calls (YouTube, OpenAI, Neon) | Fetches a transcript, waits for it to get embedded, semantic-searches it via MCP, and triggers a chat tool call |
+| Package name | `strapi-plugin-ai-sdk-<domain>` | `strapi-plugin-ai-sdk-yt-transcripts` |
+| Strapi plugin id | `ai-sdk-<domain>` | `ai-sdk-yt-transcripts` |
+| Tool name | camelCase verb-noun | `fetchTranscript` |
 
-**As of this migration, neither tier has been run.** They require a live
-host that this work does not provision or touch:
-
-- Strapi **>= 5.47** with `mcp: { enabled: true }` (§1)
-- `strapi-plugin-ai-sdk`, `-yt-transcripts`, and `-yt-embeddings` all
-  source-linked or installed at `^1.1.0`
-- An **admin API token** granting all four `plugin::ai-sdk.mcp.*`
-  permissions (read, write, destructive, maintenance) — `test:e2e` asserts on
-  `send_email` being visible (destructive tier) and on the yt-transcripts/
-  yt-embeddings namespace tool counts, which depend on `fetchTranscript` and
-  `searchYtKnowledge` (maintenance tier); a token missing any one tier fails
-  the wrong assertions for a confusing reason
-- Environment variables: `STRAPI_URL`, `STRAPI_ADMIN_TOKEN`, and optionally
-  `STRAPI_READONLY_TOKEN` for the permission-scoping assertions (a
-  read-tier-only token to prove write/destructive/maintenance tools are
-  actually absent, not just unauthorized)
-
-Do not assume these suites are green. Run tier 1 before relying on any of the
-claims in this document that it exists to pin.
+The plugin id is what becomes the namespace prefix and the permission section,
+so it is the one that shows up in user-facing places.
 
 ---
 
-## Related docs
+## Troubleshooting
 
-- [`mcp-consolidation.md`](./mcp-consolidation.md) — why extension plugins
-  register with the hub instead of running their own MCP server (historical
-  rationale, still accurate).
-- [`tool-standardization-spec.md`](./tool-standardization-spec.md) — the
-  original hub/extension architecture spec and migration guide for
-  converting a standalone-MCP plugin into an extension (historical, still
-  accurate for that specific migration path).
-- [`README.md`](../README.md) — end-user setup: enabling MCP, granting
-  permissions, connecting a client.
+**The tool does not appear anywhere.** Check the boot log for
+`Found ai-tools service on plugin: <name>` followed by
+`Registered N tools from plugin: <name>`. Neither line means the service was not
+found — usually a wrong service key, or the plugin is not enabled.
+
+**Tools registered but `tools/list` is empty.** The token holds none of the
+actions. Look for the warning that says permissions were registered but nothing
+grants them. Grant the tools under your plugin's section in **Settings > Admin
+Tokens**. This is the normal state after an upgrade, because Strapi prunes
+permission rows whose action id no longer exists.
+
+**The tool appears over MCP but not in chat.** The same actions gate chat, but
+per role rather than per token. Grant them in **Settings > Roles**.
+
+**The tool works once and then the model stops using it.** It is being withdrawn
+after a successful call because it is not tiered `read`. Add `publicSafe: true`
+or `access: 'read'`.
+
+**Arguments arrive as strings.** Wrap those parameters in your `jsonCoercible()`
+copy.
+
+**Everything registers but the model never chooses the tool.** That is a
+description problem, not a wiring problem. Say when to prefer it over
+`searchContent` explicitly — the default preamble already tells the model to
+prefer specialised tools, but only if it can tell yours is one.

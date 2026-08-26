@@ -91,7 +91,7 @@ export function Chat() {
   const { memories, removeMemory, refresh: refreshMemories } = useMemories();
   const { notes, removeNote, editNote, refresh: refreshNotes } = useNotes();
   const { sources, enabledSources, enabledToolSources, toggleSource } = useToolSources();
-  const { messages, sendMessage, isLoading, error } = useChat({
+  const { messages, sendMessage, stop, isLoading, error } = useChat({
     initialMessages,
     conversationId: activeId,
     enabledToolSources,
@@ -221,6 +221,7 @@ export function Chat() {
           isLoading={isLoading}
           onInputChange={setInput}
           onSend={handleSend}
+          onStop={stop}
         />
       </ChatWrapper>
       <NotePanel

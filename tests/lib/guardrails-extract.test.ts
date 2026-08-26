@@ -6,9 +6,7 @@ function fakeCtx(path: string, method: string, body: unknown) {
 }
 
 describe('extractUserInput', () => {
-
-
-  it('still extracts from /chat with route chat (no regression)', () => {
+  it('extracts the last user message from /chat', () => {
     const body = {
       messages: [{ role: 'user', parts: [{ type: 'text', text: 'hello there' }] }],
     };
@@ -16,19 +14,46 @@ describe('extractUserInput', () => {
     expect(result).toEqual({ text: 'hello there', route: 'chat' });
   });
 
-  it('still extracts prompt from /ask', () => {
+  it('reads the legacy content string when there are no parts', () => {
+    const body = { messages: [{ role: 'user', content: 'legacy shape' }] };
+    const result = extractUserInput(fakeCtx('/api/ai-sdk/chat', 'POST', body));
+    expect(result).toEqual({ text: 'legacy shape', route: 'chat' });
+  });
+
+  it('screens the most recent user message, not an earlier one', () => {
+    const body = {
+      messages: [
+        { role: 'user', parts: [{ type: 'text', text: 'first' }] },
+        { role: 'assistant', parts: [{ type: 'text', text: 'reply' }] },
+        { role: 'user', parts: [{ type: 'text', text: 'second' }] },
+      ],
+    };
+    const result = extractUserInput(fakeCtx('/api/ai-sdk/chat', 'POST', body));
+    expect(result).toEqual({ text: 'second', route: 'chat' });
+  });
+
+  it('ignores GET on the chat path', () => {
+    const body = { messages: [{ role: 'user', parts: [{ type: 'text', text: 'hi' }] }] };
+    expect(extractUserInput(fakeCtx('/api/ai-sdk/chat', 'GET', body))).toBeNull();
+  });
+
+  /**
+   * `/ask` and `/ask-stream` are real routes — in strapi-plugin-ai-sdk-public-chat,
+   * which ships its own copy of these guardrails and screens them there. This
+   * plugin has no such routes, so recognising them here would be dead code
+   * claiming to guard a surface it never sees.
+   */
+  it('ignores /ask, which belongs to the public-chat plugin', () => {
     const body = { prompt: 'what is the weather' };
-    const result = extractUserInput(fakeCtx('/api/ai-sdk/ask', 'POST', body));
-    expect(result).toEqual({ text: 'what is the weather', route: 'ask' });
+    expect(extractUserInput(fakeCtx('/api/ai-sdk/ask', 'POST', body))).toBeNull();
   });
 
-  it('still extracts prompt from /ask-stream', () => {
+  it('ignores /ask-stream, which belongs to the public-chat plugin', () => {
     const body = { prompt: 'stream this please' };
-    const result = extractUserInput(fakeCtx('/api/ai-sdk/ask-stream', 'POST', body));
-    expect(result).toEqual({ text: 'stream this please', route: 'ask-stream' });
+    expect(extractUserInput(fakeCtx('/api/ai-sdk/ask-stream', 'POST', body))).toBeNull();
   });
 
-  it('returns null for /mcp paths (dead MCP branches removed — no /mcp route exists in this plugin)', () => {
+  it('returns null for /mcp paths — this plugin serves no MCP route', () => {
     const result = extractUserInput(
       fakeCtx('/api/ai-sdk/mcp', 'POST', { params: { foo: 'bar' } })
     );
@@ -40,4 +65,3 @@ describe('extractUserInput', () => {
     expect(result).toBeNull();
   });
 });
-

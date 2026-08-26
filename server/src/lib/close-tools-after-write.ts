@@ -28,6 +28,12 @@ import { tierFor } from '../mcp/access';
 function mutatingToolNames(registry: ToolRegistry): Set<string> {
   const names = new Set<string>();
   for (const [name, def] of registry.getAll()) {
+    // `repeatable` opts a write out of withdrawal. The rule exists to stop a
+    // model redoing work it has already done, which assumes a second call
+    // would duplicate the first. That holds for createContent and not for a
+    // tool whose every call is a distinct item — uploading three images is
+    // three uploads, not one upload attempted three times.
+    if (def.repeatable) continue;
     if (tierFor(def) !== 'read') {
       names.add(name);
     }

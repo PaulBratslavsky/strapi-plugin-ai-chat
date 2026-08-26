@@ -199,6 +199,9 @@ export class AIProvider {
       tools: input.tools,
       stopWhen: input.stopWhen,
       ...(input.prepareStep !== undefined ? { prepareStep: input.prepareStep } : {}),
+      // Cancels the whole run, not just the current step. The SDK also hands
+      // this to each tool's execute, so a tool that honours it stops too.
+      ...(input.abortSignal !== undefined ? { abortSignal: input.abortSignal } : {}),
     };
 
     return isPromptInput(input)

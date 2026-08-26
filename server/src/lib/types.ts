@@ -38,10 +38,19 @@ export const DEFAULT_TEMPERATURE = 0.7;
 
 export const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 export const DEFAULT_MAX_CONVERSATION_MESSAGES = 15;
-export const DEFAULT_PUBLIC_MAX_CONVERSATION_MESSAGES = 10;
 export const DEFAULT_MAX_STEPS = 10;
-export const DEFAULT_PUBLIC_MAX_STEPS = 5;
-export const DEFAULT_PUBLIC_CHAT_MODEL = 'claude-haiku-4-5-20251001';
+
+/**
+ * How long a single tool call may run before it is abandoned.
+ *
+ * Nothing else bounds a tool. A network call with no timeout of its own — a
+ * transcript fetch against a host that is blocking you, say — hangs the whole
+ * turn: the panel shows a spinner that never resolves, and no error is ever
+ * produced to explain it. Sixty seconds is longer than any built-in tool needs
+ * and short enough that a wedged call becomes a legible failure rather than a
+ * frozen chat.
+ */
+export const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
 
 export interface PluginConfig {
   /** Provider-neutral API key. Preferred over the deprecated anthropicApiKey. */
@@ -58,8 +67,13 @@ export interface PluginConfig {
   systemPrompt?: string;
   maxOutputTokens?: number;
   maxConversationMessages?: number;
-  /** Max tool call steps for admin chat (defaults to 3) */
+  /** Max tool call round-trips per response. */
   maxSteps?: number;
+  /**
+   * Milliseconds a single tool call may run before it is abandoned. Set to 0
+   * to disable, which restores the old behaviour of waiting forever.
+   */
+  toolTimeoutMs?: number;
   /**
    * Tokens the model can actually read. Only needed when it cannot be
    * detected, since a served window often differs from what the weights
@@ -98,6 +112,12 @@ export interface GenerateOptions {
   maxSteps?: number;
   /** Override model for this request (e.g. use Haiku for public chat) */
   modelId?: string;
+  /**
+   * Cancels generation, including any further steps. Wired to the HTTP request
+   * in the chat controller, so a client that goes away stops costing money
+   * instead of streaming into a socket nobody is reading.
+   */
+  abortSignal?: AbortSignal;
 }
 
 export interface PromptInput extends GenerateOptions {

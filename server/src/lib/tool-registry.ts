@@ -20,6 +20,15 @@ export interface ToolContext {
    * withheld from the model. Omitted for non-HTTP callers, which are trusted.
    */
   ability?: CallerAbility;
+  /**
+   * Aborted when the turn is cancelled or the tool exceeds its timeout.
+   *
+   * Honouring it is optional and worth doing for anything that makes a network
+   * call: pass it to `fetch`, and a stopped chat stops the request instead of
+   * leaving it to finish into nothing. A tool that ignores it still gets
+   * abandoned on timeout — it just keeps running in the background.
+   */
+  abortSignal?: AbortSignal;
 }
 
 export interface ToolDefinition {
@@ -49,6 +58,24 @@ export interface ToolDefinition {
    * that default — e.g. irreversible or external-side-effect tools.
    */
   access?: AccessTier;
+  /**
+   * This tool may be called repeatedly within one turn.
+   *
+   * A mutating tool is normally withdrawn once it returns a result, so a model
+   * cannot redo a write it has already completed. That protects tools where a
+   * second call would duplicate the first — `createContent` writing the same
+   * article twice.
+   *
+   * It is wrong for tools where each call is a separate item. `uploadMedia`
+   * called three times uploads three files; withdrawing it after the first
+   * leaves the model unable to finish, usually reporting success for images it
+   * never uploaded.
+   *
+   * Set this only when repeating the call with different arguments is the
+   * normal way to use the tool. It does not affect permissions: the tool is
+   * still gated by its own action and still tiered by `access`.
+   */
+  repeatable?: boolean;
 }
 
 /** Type alias for external plugin authors to import when contributing tools */

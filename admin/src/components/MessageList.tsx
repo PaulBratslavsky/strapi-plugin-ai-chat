@@ -344,7 +344,16 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(
             message.role === 'assistant' && text ? autoLinkContentTypeUids(text) : text;
 
           const isLastMessage = index === messages.length - 1;
-          const hasToolsRunning = toolParts.some((part) => part.output === undefined);
+          // A tool part carries its own result, so "settled" is a property of
+          // the part rather than of the turn. `output === undefined` misreads a
+          // failed call as still running, since an error puts its text in
+          // `errorText` and leaves `output` unset.
+          const isSettled = (part: { state?: string; output?: unknown; errorText?: string }) =>
+            part.state === 'output-available' ||
+            part.state === 'output-error' ||
+            part.output !== undefined ||
+            part.errorText !== undefined;
+          const hasToolsRunning = toolParts.some((part) => !isSettled(part));
           const showThinking = isLoading && isLastMessage && message.role === 'assistant' && displayContent && hasToolsRunning;
 
           return (
@@ -369,12 +378,24 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(
                   </MarkdownBody>
                 )}
                 {/*
-                  A finished assistant turn with tool calls but no text. The model
-                  used its tools and stopped without writing a reply, usually by
-                  exhausting `maxSteps` mid-loop. Rendering nothing leaves an empty
-                  bubble and no way to tell that from a silent failure.
+                  Two different endings, which the same note used to cover.
+
+                  A turn that ended with every tool settled and no text is the
+                  step-limit case, and raising the limit is the right advice.
+
+                  A turn that ended with a tool still unsettled did not run out
+                  of steps — it was stopped, or the stream died, or the tool
+                  never came back. Telling that user to raise `maxSteps` sends
+                  them to the wrong place entirely.
                 */}
-                {message.role === 'assistant' && !displayContent && !isLoading && toolParts.length > 0 && (
+                {message.role === 'assistant' && !isLoading && hasToolsRunning && toolParts.length > 0 && (
+                  <EmptyReplyNote>
+                    This turn ended while a tool was still running — stopped, or
+                    the connection dropped. Any tool that had already finished
+                    did its work; the one still in flight may not have.
+                  </EmptyReplyNote>
+                )}
+                {message.role === 'assistant' && !displayContent && !isLoading && !hasToolsRunning && toolParts.length > 0 && (
                   <EmptyReplyNote>
                     The model used its tools but stopped without writing a reply.
                     It likely hit the step limit; raising <code>maxSteps</code> or{' '}

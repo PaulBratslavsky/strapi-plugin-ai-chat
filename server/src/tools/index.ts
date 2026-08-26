@@ -1,9 +1,68 @@
 import type { Core } from '@strapi/strapi';
 import type { ToolSet } from 'ai';
 import { tool, zodSchema } from 'ai';
-import type { PluginInstance } from '../lib/types';
+import type { PluginConfig, PluginInstance } from '../lib/types';
+import { DEFAULT_TOOL_TIMEOUT_MS } from '../lib/types';
 import type { ToolContext } from '../lib/tool-registry';
 import { actionForTool } from '../lib/tool-permissions';
+
+/**
+ * Abandon a tool call that never comes back.
+ *
+ * A tool with no timeout of its own can hang the entire turn. The panel shows
+ * a spinner on a tool that will never settle, the step never completes, and
+ * nothing is ever logged — the failure produces no error to read. Observed
+ * with a transcript fetch against a host that had started blocking us.
+ *
+ * Rejecting instead turns that into an ordinary tool error, which the model
+ * can report or retry, and which says which tool stalled and for how long.
+ *
+ * The timer is always cleared, including on the success path, so a fast tool
+ * does not leave a pending timeout holding the event loop open.
+ */
+async function withTimeout<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  toolName: string,
+  callerSignal?: AbortSignal,
+): Promise<T> {
+  if (!timeoutMs || timeoutMs <= 0) {
+    return work(callerSignal ?? new AbortController().signal);
+  }
+
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener('abort', abortFromCaller, { once: true });
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(
+        new Error(
+          `${toolName} timed out after ${Math.round(timeoutMs / 1000)}s and was abandoned. ` +
+            `The call may have been blocked or the service may be unreachable. ` +
+            `Tell the user this tool did not respond rather than assuming it succeeded.`,
+        ),
+      );
+    }, timeoutMs);
+  });
+
+  try {
+    // The tool is handed the derived signal, so one that honours it stops on
+    // timeout too. One that ignores it keeps running in the background — the
+    // turn is freed either way, which is the point.
+    return await Promise.race([work(controller.signal), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', abortFromCaller);
+  }
+}
 
 export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet {
   const plugin = strapi.plugin('ai-sdk') as unknown as PluginInstance;
@@ -16,6 +75,12 @@ export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet
   const enabledSources = context?.enabledToolSources;
   const ability = context?.ability;
   const tools: ToolSet = {};
+
+  // Optional chaining because not every caller arrives with a full Strapi:
+  // tests build a minimal one, and a missing config should fall back to the
+  // default rather than take the whole tool set down.
+  const config = strapi.config?.get?.<PluginConfig>('plugin::ai-sdk');
+  const toolTimeoutMs = config?.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
 
   for (const [name, def] of registry.getAll()) {
     // If enabledToolSources is provided, filter plugin tools by prefix
@@ -47,9 +112,16 @@ export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet
     tools[name] = tool({
       description: def.description,
       inputSchema: zodSchema(def.schema) as any,
-      execute: async (args: any) => {
+      execute: async (args: any, options?: { abortSignal?: AbortSignal }) => {
         try {
-          return await def.execute(args, strapi, context);
+          // The SDK's own signal is passed in, so stopping the request stops
+          // a tool that is already running — not just the steps after it.
+          return await withTimeout(
+            (signal) => def.execute(args, strapi, { ...context, abortSignal: signal }),
+            toolTimeoutMs,
+            name,
+            options?.abortSignal,
+          );
         } catch (error) {
           // Rethrown rather than returned: the SDK marks the step a tool
           // error, which is what lets the model try again on the next step.

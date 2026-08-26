@@ -1,1482 +1,816 @@
-# AI SDK Plugin Architecture
+# Architecture
 
-A comprehensive guide to the Strapi v5 plugin that embeds an AI chat interface, MCP server, TTS synthesis, and animated 3D avatar into the Strapi admin panel.
+How the plugin is put together, and why the parts that look odd are shaped the
+way they are. Current as of **2.6.0**.
 
----
+For installation and configuration, see the [README](../README.md). For writing
+a plugin that contributes tools, see [plugin-contract.md](./plugin-contract.md).
 
-## Table of Contents
+## Contents
 
-- [High-Level Overview](#high-level-overview)
-- [System Architecture](#system-architecture)
-- [Plugin Lifecycle](#plugin-lifecycle)
-- [Server-Side Architecture](#server-side-architecture)
-  - [Configuration](#configuration)
-  - [Guardrails Middleware](#guardrails-middleware)
-  - [AI Provider Factory](#ai-provider-factory)
-  - [Tool Registry](#tool-registry)
-  - [The Permission Model](#the-permission-model)
-  - [TTS Provider Registry](#tts-provider-registry)
-  - [Tool Logic Layer](#tool-logic-layer)
-  - [Services](#services)
-  - [Controllers & Routes](#controllers--routes)
-  - [MCP Server](#mcp-server)
-- [Admin-Side Architecture](#admin-side-architecture)
-  - [Component Tree](#component-tree)
-  - [Chat Component Split](#chat-component-split)
-  - [Hooks](#hooks)
-  - [Avatar 3D System](#avatar-3d-system)
-  - [Animation System](#animation-system)
-- [Data Flows](#data-flows)
-  - [Chat Request Flow](#chat-request-flow)
-  - [MCP Request Flow](#mcp-request-flow)
-  - [Voice Mode Flow](#voice-mode-flow)
-  - [Animation Flow](#animation-flow)
-- [Extending the Plugin](#extending-the-plugin)
-  - [Adding a Custom Tool](#adding-a-custom-tool)
-  - [Adding an AI Provider](#adding-an-ai-provider)
-  - [Adding a TTS Provider](#adding-a-tts-provider)
-  - [Customizing the System Prompt](#customizing-the-system-prompt)
-  - [Enabling and Scoping MCP](#enabling-and-scoping-mcp)
+- [What this plugin is](#what-this-plugin-is)
+- [Map of the codebase](#map-of-the-codebase)
+- [Lifecycle](#lifecycle)
+- [The provider layer](#the-provider-layer)
+- [The tool registry](#the-tool-registry)
+- [Plugin tool discovery](#plugin-tool-discovery)
+- [The permission model](#the-permission-model)
+- [The system prompt](#the-system-prompt)
+- [A chat request, end to end](#a-chat-request-end-to-end)
+- [Stopping a turn](#stopping-a-turn)
+- [Withdrawing a tool after a write](#withdrawing-a-tool-after-a-write)
+- [The MCP surface](#the-mcp-surface)
+- [Guardrails](#guardrails)
+- [Storage](#storage)
+- [The context budget](#the-context-budget)
+- [Admin panel](#admin-panel)
+- [HTTP endpoints](#http-endpoints)
 - [Testing](#testing)
-  - [Test Scripts](#test-scripts)
-  - [Testing Methodology](#testing-methodology)
-  - [Running Tests](#running-tests)
-- [File Reference](#file-reference)
+- [What used to be here](#what-used-to-be-here)
 
 ---
 
-## High-Level Overview
+## What this plugin is
 
-```mermaid
-graph TB
-    subgraph Admin["Strapi Admin Panel"]
-        UI["Chat UI<br/>(React)"]
-        Avatar["Avatar 3D<br/>(Three.js)"]
-    end
+Two things sharing one tool registry:
 
-    subgraph Server["Strapi Server"]
-        Guardrail["Guardrail Middleware<br/>(input safety)"]
-        Controller["Controllers"]
-        Service["Service Layer"]
-        AIProvider["AI Provider<br/>(Anthropic/Custom)"]
-        ToolReg["Tool Registry"]
-        MCPBridge["MCP Bridge<br/>(registerAiSdkMcpTools)"]
-        TTS["TTS Registry<br/>(Typecast/Custom)"]
-        ToolLogic["Tool Logic<br/>(list, search, write)"]
-    end
-
-    subgraph StrapiMCP["Strapi's Official MCP Server (>= 5.47)"]
-        MCPServerCore["strapi.ai.mcp"]
-    end
-
-    subgraph External["External Services"]
-        Claude["Claude API"]
-        TypecastAPI["Typecast API"]
-        MCPClient["MCP Clients"]
-    end
-
-    UI -->|"POST /chat"| Guardrail
-    UI -->|"POST /tts"| Controller
-    Guardrail -->|"allowed"| Controller
-    Controller --> Service
-    Service --> AIProvider
-    Service --> ToolReg
-    AIProvider -->|"streamText / generateText"| Claude
-    ToolReg --> ToolLogic
-    ToolLogic -->|"Strapi Document API"| DB[(Database)]
-    Controller -->|"/tts"| TTS
-    TTS --> TypecastAPI
-    MCPBridge -->|"registerTool() at boot"| ToolReg
-    MCPBridge -->|"strapi.ai.mcp.registerTool()"| MCPServerCore
-    MCPClient -->|"POST /mcp (admin token)"| MCPServerCore
-    MCPServerCore -->|"tool handler calls"| ToolLogic
-    Avatar -.->|"animation triggers"| UI
-```
-
-Note: MCP requests to `/mcp` do **not** pass through the guardrail middleware — that route belongs to Strapi's own MCP service, not to this plugin's routes. Guardrails cover `/ask`, `/ask-stream`, and `/chat`, plus the anonymous route in `strapi-plugin-ai-sdk-public-chat`, which borrows the same middleware — see [`docs/guardrails.md`](./guardrails.md#overview).
-
----
-
-## System Architecture
-
-```mermaid
-graph LR
-    subgraph Plugin["Plugin Instance (runtime)"]
-        direction TB
-        AI["aiProvider: AIProvider"]
-        TR["toolRegistry: ToolRegistry"]
-        TTSR["ttsRegistry: TTSRegistry"]
-        TTSP["ttsProvider: TTSProvider"]
-    end
-
-    subgraph Registries["Registry Pattern"]
-        direction TB
-        AIReg["AIProvider.registerProvider()"]
-        ToolRegR["toolRegistry.register()"]
-        TTSRegR["ttsRegistry.register()"]
-    end
-
-    Registries -->|"populated in bootstrap"| Plugin
-```
-
-The plugin stores all runtime state on the Strapi plugin instance (`strapi.plugin('ai-sdk')`), typed as `PluginInstance`:
-
-```typescript
-interface PluginInstance {
-  aiProvider?: AIProvider;
-  toolRegistry?: ToolRegistry;
-}
-```
-
-There is no MCP-specific state on the plugin instance anymore — no factory,
-no session map. The MCP bridge (`server/src/mcp/`) is a stateless boot-time
-step: it reads `toolRegistry.getPublic()` once and calls
-`strapi.ai.mcp.registerTool()` for each tool. All session, transport, and
-connection state lives inside Strapi's own MCP service, which this plugin
-never touches after registration.
-
----
-
-## Plugin Lifecycle
-
-```mermaid
-sequenceDiagram
-    participant Strapi
-    participant Register
-    participant Bootstrap
-    participant Runtime
-    participant Destroy
-
-    Strapi->>Register: register()
-    Note over Register: No-op (deferred to bootstrap)
-
-    Strapi->>Bootstrap: bootstrap({ strapi })
-    Bootstrap->>Bootstrap: Register AI provider factory
-    Bootstrap->>Bootstrap: Initialize AIProvider
-    Bootstrap->>Bootstrap: Create ToolRegistry + register built-in tools
-    Bootstrap->>Bootstrap: discoverPluginTools() — scan other plugins for ai-tools services
-    Bootstrap->>Bootstrap: registerAiSdkMcpTools() — bridge registry onto strapi.ai.mcp (no-op if MCP disabled/unavailable)
-    Note over Bootstrap: Plugin instance fully populated
-
-    Bootstrap->>Runtime: Plugin ready
-    Note over Runtime: Handles requests...
-
-    Strapi->>Destroy: destroy({ strapi })
-    Destroy->>Destroy: aiProvider.destroy()
-    Destroy->>Destroy: Null out references
-```
-
-Note: MCP tool registration must happen during `bootstrap()`, before Strapi's
-MCP server starts serving — that is the window in which its capability set is
-locked. There is nothing to tear down for MCP in `destroy()`; the plugin
-holds no MCP-specific state (see [System Architecture](#system-architecture)).
-
-### Bootstrap Order
-
-The bootstrap function initializes systems in dependency order:
-
-```typescript
-// 1. Register provider factory (static, no config needed)
-AIProvider.registerProvider('anthropic', ({ apiKey, baseURL }) => {
-  const provider = createAnthropic({ apiKey, baseURL });
-  return (modelId: string) => provider(modelId);
-});
-
-// 2. Initialize AI provider (needs config + registered factory)
-const aiProvider = new AIProvider();
-aiProvider.initialize(config);
-plugin.aiProvider = aiProvider;
-
-// 3. Initialize tool registry — loop over tools/definitions/
-const toolRegistry = new ToolRegistry();
-for (const tool of builtInTools) {
-  toolRegistry.register(tool);
-}
-plugin.toolRegistry = toolRegistry;
-
-// 4. Discover tools contributed by other plugins' `ai-tools` services
-//    (e.g. strapi-plugin-ai-sdk-yt-transcripts) and register them into the
-//    same registry with a namespace prefix.
-discoverPluginTools(strapi, toolRegistry);
-
-// 5. Bridge the registry onto Strapi's official MCP server. No-op (logs and
-//    returns) if strapi.ai.mcp is absent (Strapi < 5.47) or not enabled
-//    (host didn't set `mcp: { enabled: true }`).
-await registerAiSdkMcpTools(strapi, toolRegistry);
-```
-
----
-
-## Server-Side Architecture
-
-### Configuration
-
-All plugin settings are defined in `config/index.ts` with sensible defaults:
-
-```typescript
-interface PluginConfig {
-  anthropicApiKey: string;       // Required for AI features
-  provider?: string;             // AI provider name (default: 'anthropic')
-  chatModel?: string;            // Model ID (default: 'claude-sonnet-5')
-  baseURL?: string;              // Custom API base URL
-  systemPrompt?: string;         // Custom system prompt (supports {tools} placeholder)
-  typecastApiKey?: string;       // For TTS
-  typecastActorId?: string;      // For TTS
-  guardrails?: GuardrailConfig;  // Input safety guardrails
-}
-```
-
-There is no plugin-level MCP configuration anymore. MCP is enabled entirely
-by the host app (`mcp: { enabled: true }` in the host's own
-`config/server.ts` — a Strapi-level setting, not an `ai-sdk` plugin-config
-key), and this plugin has no session/transport knobs left to tune since it
-no longer owns the transport. See [MCP Server](#mcp-server) below.
-
-Configure in your Strapi `config/plugins.ts`:
-
-```typescript
-export default {
-  'ai-sdk': {
-    enabled: true,
-    config: {
-      anthropicApiKey: env('ANTHROPIC_API_KEY'),
-      chatModel: 'claude-sonnet-5',
-      systemPrompt: 'You are a helpful CMS assistant.\n\n{tools}',
-    },
-  },
-};
-```
-
----
-
-### Guardrails Middleware
-
-The guardrail middleware intercepts AI requests before they reach the controller. It runs as a Strapi route middleware registered on `/ask`, `/ask-stream`, and `/chat`. `strapi-plugin-ai-sdk-public-chat` references the same middleware as `plugin::ai-sdk.guardrail` on its own route, so the anonymous surface is still screened after being split out — labelled `route: 'public-chat'`, matched on the `/ai-sdk-public-chat/` path segment. It does **not** run on `/mcp` — that route is owned by Strapi's own MCP service, not by this plugin, so MCP tool calls bypass the guardrail middleware entirely — see [`docs/guardrails.md`](./guardrails.md#overview) for the full explanation.
-
-```mermaid
-graph LR
-    Request["HTTP Request"] --> Auth["Auth"]
-    Auth --> Guardrail["Guardrail Middleware"]
-    Guardrail -->|"blocked (chat)"| SSE["SSE message<br/>(renders in chat UI)"]
-    Guardrail -->|"blocked (API)"| JSON["403 JSON error"]
-    Guardrail -->|"allowed"| Controller["Controller"]
-```
-
-**Pipeline steps (per request):**
-
-1. **Extract input** -- adapts to request shape (`messages[]` for any `/chat` path, `prompt` for `/ask` and `/ask-stream`)
-2. **Custom hook** -- `beforeProcess` runs first (if configured)
-3. **Normalize** -- NFKC, strip zero-width chars, collapse whitespace
-4. **Pattern match** -- regex patterns from `default-patterns.json` + user config
-5. **Length check** -- reject if over `maxInputLength` (default: 10,000)
-
-Patterns are compiled once at startup, not per-request. The middleware produces route-aware responses: chat routes get an SSE stream (so the UI renders a natural assistant message), while API routes get a structured 403 JSON error.
-
-**Default pattern categories:** prompt injection, jailbreak, system prompt extraction, system prompt mimicry, destructive commands.
-
-For full details, configuration examples, and the `beforeProcess` hook API, see [docs/guardrails.md](./guardrails.md).
-
----
-
-### AI Provider Factory
-
-```mermaid
-classDiagram
-    class AIProvider {
-        -static providerRegistry: Map~string, ProviderCreator~
-        -modelFactory: (modelId) => LanguageModel | null
-        -model: string
-        +static registerProvider(name, creator)
-        +initialize(config): boolean
-        +generate(input): GenerateTextResult
-        +stream(input): StreamTextResult
-        +streamRaw(input): StreamTextRawResult
-        +getChatModel(): string
-        +isInitialized(): boolean
-        +destroy(): void
-    }
-
-    class ProviderCreator {
-        <<type>>
-        (config: apiKey+baseURL) => (modelId) => LanguageModel
-    }
-
-    AIProvider --> ProviderCreator : static registry
-```
-
-The `AIProvider` uses a **static registry** for provider factories and **instance state** for the active model:
-
-```typescript
-// Registration (in bootstrap, before initialize)
-AIProvider.registerProvider('anthropic', ({ apiKey, baseURL }) => {
-  const provider = createAnthropic({ apiKey, baseURL });
-  return (modelId: string) => provider(modelId);
-});
-
-// Initialization (reads provider name from config)
-const aiProvider = new AIProvider();
-aiProvider.initialize(config); // looks up config.provider ?? 'anthropic'
-```
-
-**Adding a custom provider** (e.g., OpenAI):
-
-```typescript
-import { createOpenAI } from '@ai-sdk/openai';
-
-AIProvider.registerProvider('openai', ({ apiKey, baseURL }) => {
-  const provider = createOpenAI({ apiKey, baseURL });
-  return (modelId: string) => provider(modelId);
-});
-```
-
-Then set `provider: 'openai'` and `chatModel: 'gpt-4o'` in config.
-
----
-
-### Tool Registry
-
-```mermaid
-classDiagram
-    class ToolRegistry {
-        -tools: Map~string, ToolDefinition~
-        +register(def: ToolDefinition)
-        +unregister(name): boolean
-        +get(name): ToolDefinition?
-        +has(name): boolean
-        +getAll(): Map
-        +getPublic(): Map
-    }
-
-    class ToolDefinition {
-        +name: string
-        +description: string
-        +schema: ZodObject
-        +execute(args, strapi, context?): Promise~unknown~
-        +internal?: boolean
-        +publicSafe?: boolean
-        +access?: 'read' | 'write' | 'destructive'
-    }
-
-    class ToolContext {
-        +adminUserId?: number
-        +enabledToolSources?: string[]
-        +ability?: CallerAbility
-    }
-
-    AISDKTools --> ToolContext : filters by
-
-    ToolRegistry --> ToolDefinition : stores
-
-    class AISDKTools["tools/index.ts"] {
-        +createTools(strapi, context?): ToolSet
-        +describeTools(tools): string
-    }
-
-    class MCPBridge["mcp/register-tools.ts"] {
-        +registerToolsOnMcp(strapi, registry): number
-    }
-
-    AISDKTools --> ToolRegistry : reads getAll()
-    MCPBridge --> ToolRegistry : reads getPublic()
-```
-
-The `ToolRegistry` is the central source of truth for all tools. Two consumers read from it:
-
-| Consumer | Method | Tools Included |
-|----------|--------|----------------|
-| `tools/index.ts` (AI SDK chat) | `getAll()` | Non-internal tools the **caller's role** grants, plus `internal: true` tools |
-| `mcp/register-tools.ts` (MCP bridge, boot-time only) | `getPublic()` | Only non-internal tools; each gated per-tool at request time |
-
-Both consumers ultimately enforce the **same per-tool actions** — see
-[The Permission Model](#the-permission-model) below. The registry itself is
-permission-agnostic; filtering happens in the consumers.
-
-**A sample of built-in tools** (see [`docs/plugin-contract.md`](./plugin-contract.md#3-the-tooldefinition-interface) for the full list):
-
-| Name | Internal | `access` (risk metadata) | Description |
-|------|----------|--------------------------|-------------|
-| `listContentTypes` | No | read (`publicSafe`) | List all Strapi content types and components |
-| `searchContent` | No | read (`publicSafe`) | Search/query any content type |
-| `createContent` | No | write (default) | Create a new document |
-| `sendEmail` | No | destructive (explicit) | Send an email via the configured provider |
-| `saveMemory` | Yes | — (chat-only, never reaches MCP) | Save a chat memory |
-
-> **`access` no longer grants anything.** It used to select one of three
-> coarse tier actions (`mcp.read`/`.write`/`.destructive`). Permissions are
-> now **one action per tool**, so `access` survives purely as risk metadata —
-> useful for sorting and for deciding what to tick, but it no longer decides
-> what a caller may call. `tierFor()` is retained for the same reason.
-
-**Tool name conversion for MCP:**
-
-The MCP server converts camelCase tool names to snake_case:
-- `listContentTypes` -> `list_content_types`
-- `searchContent` -> `search_content`
-- `createContent` -> `create_content`
-- Namespaced tools also convert their `__` separator and hyphens:
-  `ai-sdk-yt-transcripts__fetchTranscript` -> `ai_sdk_yt_transcripts__fetch_transcript`
-
----
-
-### The Permission Model
-
-The plugin exposes tools to two audiences that must be scoped independently:
-an **admin using chat inside Strapi** (bring-your-own model, potentially
-running locally) and an **external MCP client** holding an API token. The
-whole point is that these need not be the same — your internal model can be
-powerful while an outward-facing token stays narrow.
-
-Both are enforced with **one action registry**. What differs is who you grant
-the actions to:
-
-| | Audience | Granted on | Enforced in |
+| Surface | Transport | Caller authenticates as | Tool set |
 |---|---|---|---|
-| **Internal chat** | Logged-in admin user | **RBAC role** (Settings → Roles) | `createTools()` filters by `ctx.state.userAbility` |
-| **External MCP** | Admin API token | **The token** (Settings → Admin Tokens) | Strapi checks each tool's `auth.policies` |
+| Admin chat | `POST /ai-sdk/chat`, SSE | Logged-in admin | What that admin's **role** grants |
+| MCP | Strapi's own `POST /mcp` | Admin API token | What that **token** grants |
 
-This works because both of Strapi's admin auth strategies put a CASL ability
-on the same place — `ctx.state.userAbility` — the session strategy from the
-user's role, the `admin-token` strategy from the token's permission list. One
-check covers both callers.
+The plugin does not serve `/mcp`. Strapi 5.47 ships an official MCP server, and
+this plugin registers its tools onto it during `bootstrap()`. Everything
+MCP-side in `server/src/mcp/` is registration code, not transport code.
 
-**Action id shape:**
-
-```
-plugin::<owning-plugin>.tool.<slug>
-
-plugin::ai-sdk.tool.search-content
-plugin::ai-sdk-yt-transcripts.tool.fetch-transcript
-```
-
-The owning plugin is `ai-sdk` for built-ins and the contributing plugin's id
-for tools discovered from other plugins — so **a plugin's tool permissions
-appear under that plugin's own section** in the roles grid, not buried under
-ai-sdk. `ai-sdk` discovers the tools; the owning plugin owns the permissions.
-
-> **Two slug rules, deliberately.** The permission uid uses **hyphens**
-> (`tool.fetch-transcript`) because Strapi's uid validator rejects
-> underscores. The MCP wire name uses **underscores**
-> (`ai_sdk_yt_transcripts__fetch_transcript`). Same tool, two encodings —
-> `actionForTool()` is the single place that maps between them, so never
-> hand-build an action id.
+The single registry is the point. A tool is written once and both surfaces get
+it, gated by the same permission action, with the same failure handling.
 
 ```mermaid
-graph TD
-    Registry["ToolRegistry<br/>(all tools)"]
-
-    Registry --> Chat["createTools(ctx.ability)"]
-    Registry --> Bridge["registerToolsOnMcp()<br/>boot-time"]
-
-    Chat -->|"ability.can(actionForTool(name))"| ChatTools["Tools handed to the model<br/>in admin chat"]
-    Bridge -->|"auth: policies[actionForTool(name)]"| MCPTools["Tools exposed on /mcp"]
-
-    Role["Admin role grants"] -.-> Chat
-    Token["Admin API token grants"] -.-> MCPTools
-```
-
-**Failure mode to know:** `createTools()` filters *only when an ability is
-supplied*. Non-HTTP callers (tests, programmatic use) pass none and are
-trusted with the full set. That keeps internal callers working, but it means
-a new HTTP entry point that forgets to pass `ctx.state.userAbility` silently
-gets **unfiltered** tools. Any new route that builds a toolset must pass the
-ability through.
-
-Anonymous traffic is outside all of this. It has no ability to check against,
-so it is not served by this plugin at all — `strapi-plugin-ai-sdk-public-chat`
-owns that surface, with its own routes, its own permission namespace, and an
-explicit `allowedTools` list that defaults to empty. The old approach (a
-`publicChat` method here, filtered by a `publicSafe` flag on each tool) failed
-open: a tool missing the flag, or contributed by another plugin, widened the
-anonymous surface with no config change.
-
----
-
-### TTS Provider Registry
-
-```mermaid
-classDiagram
-    class TTSRegistry {
-        -factories: Map~string, TTSFactory~
-        +register(name, factory)
-        +create(name, config): TTSProvider
-        +has(name): boolean
-    }
-
-    class TTSProvider {
-        <<interface>>
-        +synthesize(text, options?): Promise~Buffer~
-    }
-
-    class TypecastProvider {
-        -apiKey: string
-        -actorId: string
-        +synthesize(text, options?): Promise~Buffer~
-    }
-
-    TTSRegistry --> TTSProvider : creates
-    TypecastProvider ..|> TTSProvider
-```
-
-`createTTSRegistry()` returns a registry pre-loaded with the `'typecast'` factory. Additional providers can be registered at runtime.
-
----
-
-### Tool Logic Layer
-
-```mermaid
-graph TB
-    subgraph Consumers
-        AITool["AI SDK Tools<br/>(tools/index.ts)"]
-        MCPTool["MCP Bridge<br/>(mcp/register-tools.ts)"]
-    end
-
-    subgraph ToolLogic["tool-logic/ (pure business logic)"]
-        LCT["listContentTypes"]
-        SC["searchContent"]
-        WC["writeContent"]
-    end
-
-    subgraph Strapi["Strapi APIs"]
-        CT["strapi.contentTypes"]
-        Comp["strapi.components"]
-        Docs["strapi.documents()"]
-    end
-
-    AITool --> LCT
-    AITool --> SC
-    AITool --> WC
-    MCPTool --> LCT
-    MCPTool --> SC
-    MCPTool --> WC
-    LCT --> CT
-    LCT --> Comp
-    SC --> Docs
-    WC --> Docs
-```
-
-The `tool-logic/` directory contains pure Strapi-coupled business logic with **no HTTP concerns**. Each module exports:
-- A **Zod schema** for input validation
-- A **description** string
-- An **async function** that takes `(strapi, params?)` and returns results
-
-This layer is shared between AI SDK tools and MCP tools, ensuring consistent behavior.
-
----
-
-### Services
-
-The service layer (`services/service.ts`) is the facade between controllers and `AIProvider`:
-
-```mermaid
-graph LR
-    Controller -->|"ask / askStream / chat"| Service
-    Service -->|"system prompt composition"| Service
-    Service -->|"createTools()"| ToolRegistry
-    Service -->|"generateText / streamText / streamRaw"| AIProvider
-    AIProvider -->|"API call"| Claude["Claude API"]
-```
-
-**System prompt composition** is handled entirely by the service:
-
-```typescript
-function composeSystemPrompt(config, toolsDescription, override?) {
-  const base = override || config?.systemPrompt || DEFAULT_PREAMBLE;
-
-  // Support {tools} placeholder
-  if (base.includes('{tools}')) {
-    return base.replace('{tools}', toolsDescription);
-  }
-
-  // Otherwise append tool descriptions
-  return `${base}\n\n${toolsDescription}`;
-}
-```
-
-The default preamble is:
-> "You are a Strapi CMS assistant. Use your tools to fulfill user requests. When asked to create or update content, use the appropriate tool -- do not tell the user you cannot."
-
----
-
-### Controllers & Routes
-
-```mermaid
-graph TB
-    subgraph ContentAPI["Content API (/api/ai-sdk/...)"]
-        R1["POST /ask"]
-        R2["POST /ask-stream"]
-        R3["POST /chat"]
-    end
-
-    subgraph AdminAPI["Admin API"]
-        R5["POST /chat"]
-        R6["POST /tts"]
-    end
-
-    subgraph StrapiOwned["Owned by Strapi core, not this plugin"]
-        R4["POST /mcp"]
-    end
-
-    R1 --> C1["controller.ask"]
-    R2 --> C2["controller.askStream"]
-    R3 --> C3["controller.chat"]
-    R5 --> C3
-    R6 --> C5["controller.tts"]
-    R4 -.->|"tools registered at boot"| MCPBridge["mcp/register-tools.ts"]
-
-    C1 -->|"prompt -> text"| Service
-    C2 -->|"prompt -> SSE stream"| Service
-    C3 -->|"messages -> UI Message Stream v1"| Service
-    C5 -->|"text -> audio/wav"| TTS
-```
-
-| Endpoint | Type | Handler | Description |
-|----------|------|---------|-------------|
-| `POST /ask` | Content API | `controller.ask` | Simple prompt -> text response |
-| `POST /ask-stream` | Content API | `controller.askStream` | Prompt -> SSE text stream |
-| `POST /chat` | Content API + Admin | `controller.chat` | Messages -> UI Message Stream v1 |
-| `POST /tts` | Admin only | `controller.tts` | Text -> audio/wav buffer |
-| `POST /mcp` (+ SSE/session semantics) | Strapi core, not this plugin | `strapi.ai.mcp` | JSON-RPC/MCP protocol, admin-token authenticated |
-
-This plugin has **no `/mcp` route of its own** anymore — no route file entry,
-no controller. It only *populates* `/mcp`'s capability set at boot, by
-calling `strapi.ai.mcp.registerTool()` for each public tool.
-
----
-
-### MCP Server
-
-```mermaid
-sequenceDiagram
-    participant Boot as bootstrap()
-    participant Registry as ToolRegistry
-    participant Bridge as registerAiSdkMcpTools()
-    participant Perms as admin::permission
-    participant MCP as strapi.ai.mcp
-    participant Client as MCP Client
-    participant Tools as Tool Logic
-
-    Boot->>Registry: built-in tools + discoverPluginTools()
-    Boot->>Bridge: registerAiSdkMcpTools(strapi, registry)
-    Bridge->>MCP: isEnabled()?
-    alt Strapi < 5.47 or mcp.enabled !== true
-        Bridge-->>Boot: log + return (no tools registered)
-    else enabled
-        Bridge->>Perms: registerMany(one action per tool, grouped by owning plugin)
-        loop for each registry.getPublic() tool
-            Bridge->>Bridge: toSnakeCase(name), actionForTool(name)
-            Bridge->>MCP: registerTool({ name, schema, auth: {policies:[toolAction]}, handler })
-            Note over Bridge: try/catch per tool — one bad tool logs<br/>a warning and is skipped, boot continues
-        end
-        Bridge->>MCP: registerResource(strapi://ai-sdk/tools/guide)
-    end
-
-    Note over Client,MCP: Later, at request time — this plugin is no<br/>longer involved; Strapi owns transport/sessions/auth
-
-    Client->>MCP: POST /mcp {tools/call, name, args} + Bearer admin token
-    MCP->>MCP: check auth.policies action against token's role
-    MCP->>Tools: registered handler → def.execute(args, strapi)
-    Tools-->>MCP: result
-    MCP->>MCP: guardSize() — substitute error if ~2x payload > 950KB
-    MCP-->>Client: { content, structuredContent }
-```
-
-**What changed from the hand-rolled server:**
-- No sessions, no `mcp-session-id` header handling, no session map, no
-  expiry sweeps, no `maxSessions`/`cleanupInterval` config — all of that was
-  deleted along with the old transport. Strapi's own MCP service owns
-  connection lifecycle now; this plugin never sees an individual request.
-- Tool registration is **one boot-time pass**, not per-session. Once
-  `registerAiSdkMcpTools()` returns, this plugin's involvement with MCP is
-  over until the next boot — `strapi.ai.mcp.registerTool()`'s `createHandler`
-  closure is what actually runs on each `tools/call`.
-- Authorization is `auth: { policies: [{ action }] }` per tool — **one action
-  per tool** (`plugin::<owner>.tool.<slug>`), not a single blanket `handle`
-  permission on the whole endpoint, and no longer the three coarse tiers the
-  first migration shipped. See
-  [The Permission Model](#the-permission-model).
-- A `guardSize()` backstop substitutes a structured "too large, paginate"
-  error for any result whose doubled wire size (content + structuredContent)
-  would exceed ~1&nbsp;MB, since MCP clients reject oversized results with an
-  opaque, unactionable error.
-
-**Failure isolation is two-layered** (`server/src/mcp/index.ts` and
-`server/src/mcp/register-tools.ts`):
-- **Inner layer (per tool):** the note in the diagram above — each tool's
-  `mcp.registerTool()` call is individually wrapped in try/catch inside
-  `registerToolsOnMcp()`'s loop. One tool's registration failing (e.g. a name
-  collision with a Strapi-derived built-in) logs a warning and skips just
-  that tool; the loop continues to the next one.
-- **Outer layer (whole pass):** `registerAiSdkMcpTools()` wraps
-  `registerMcpAdminPermissions()`, `registerToolsOnMcp()`, and
-  `registerResourcesOnMcp()` in a single try/catch. If anything in that
-  block throws unexpectedly — e.g. the admin permission service throws, or
-  resource registration fails — it's caught, logged at `strapi.log.error`,
-  and **not rethrown**. `bootstrap()` returns normally and Strapi finishes
-  booting successfully; only MCP capability registration is affected, never
-  the rest of the plugin or the host app. This outer catch is **not
-  transactional**: if the tool-registration loop already called
-  `mcp.registerTool()` for some tools before a later step throws (e.g.
-  `registerResourcesOnMcp()` fails after tools succeeded), those
-  already-registered tools stay registered — the catch only stops whatever
-  ran after the throw point, it doesn't undo prior side effects.
-
----
-
-## Admin-Side Architecture
-
-### Component Tree
-
-```mermaid
-graph TB
-    App["App.tsx<br/>(Router)"]
-    HomePage["HomePage.tsx"]
-    Provider["AvatarAnimationProvider"]
-    Chat["Chat.tsx<br/>(Orchestrator)"]
-    AvatarPanel["AvatarPanel.tsx"]
-    Avatar3D["Avatar3D.tsx<br/>(Three.js)"]
-    MessageList["MessageList.tsx"]
-    ChatInput["ChatInput.tsx"]
-    ToolCallDisplay["ToolCallDisplay.tsx"]
-
-    App --> HomePage
-    HomePage --> Provider
-    Provider --> Chat
-    Chat --> AvatarPanel
-    Chat --> MessageList
-    Chat --> ChatInput
-    AvatarPanel --> Avatar3D
-    MessageList --> ToolCallDisplay
-```
-
-### Chat Component Split
-
-The Chat UI is split into focused components, each with co-located styled-components:
-
-| Component | Responsibility | Lines |
-|-----------|---------------|-------|
-| `Chat.tsx` | Orchestrator -- wires hooks to subcomponents | ~100 |
-| `MessageList.tsx` | Message rendering loop, typing indicator, markdown | ~130 |
-| `ChatInput.tsx` | Input field, voice toggle, send button | ~90 |
-| `ToolCallDisplay.tsx` | Collapsible tool call viewer | ~70 |
-
-**Chat.tsx** manages all state and passes props down:
-
-```typescript
-export function Chat() {
-  // State
-  const [input, setInput] = useState('');
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
-  const [awaitingAudio, setAwaitingAudio] = useState(false);
-
-  // Hooks
-  const { trigger, clearAnimation } = useAvatarAnimation();
-  const { visibleText, startReveal, reset: resetReveal } = useTextReveal();
-  const { speak, stop: stopAudio } = useAudioPlayer({ onPlayStart, onPlayEnded });
-  const { messages, sendMessage, isLoading, error } = useChat({ onAnimationTrigger, onStreamEnd });
-
-  return (
-    <ChatLayout>
-      <AvatarPanel />
-      <ChatWrapper>
-        <MessageList
-          ref={messagesEndRef}
-          messages={messages}
-          isLoading={isLoading}
-          awaitingAudio={awaitingAudio}
-          voiceEnabled={voiceEnabled}
-          visibleText={visibleText}
-        />
-        {error && <ErrorBox />}
-        <ChatInput
-          input={input}
-          isLoading={isLoading}
-          voiceEnabled={voiceEnabled}
-          onInputChange={setInput}
-          onSend={handleSend}
-          onToggleVoice={handleToggleVoice}
-        />
-      </ChatWrapper>
-    </ChatLayout>
-  );
-}
+flowchart LR
+  A[Admin chat panel]
+  B[MCP client<br/>Claude Desktop, Cursor]
+  A -->|POST /ai-sdk/chat| E[service.chat] --> C[ToolRegistry]
+  B -->|POST /mcp| F[Strapi official<br/>MCP server] --> C
+  C --> D[tool-logic/] --> G[(Strapi documents API)]
 ```
 
 ---
 
-### Hooks
+## Map of the codebase
 
-```mermaid
-graph LR
-    subgraph Hooks
-        UC["useChat"]
-        UAP["useAudioPlayer"]
-        UTR["useTextReveal"]
-        UAA["useAvatarAnimation"]
-    end
+```
+server/src/
+  index.ts              Strapi plugin export
+  register.ts           no-op; everything happens in bootstrap
+  bootstrap.ts          provider init, registry init, tool discovery, MCP registration
+  destroy.ts
+  config/               defaults + validator
+  content-types/        conversation, memory, note, public-memory, task
+  controllers/          chat + diagnostics, and CRUD per content type
+  routes/admin/         every route; all admin-authenticated
+  services/
+    service.ts          chat orchestration, system prompt composition
+    provider.ts         exposes AIProvider.registerProvider to host apps
+  middlewares/          guardrail middleware registration
+  guardrails/           input screening (chat route only)
+  lib/
+    ai-provider.ts      provider registry, lazy model resolution
+    tool-registry.ts    ToolDefinition, ToolRegistry
+    tool-permissions.ts action id for a tool; used by three call sites
+    close-tools-after-write.ts
+    context-budget.ts   preamble cost, context window detection
+    stored-messages.ts  conversation storage contract + legacy migration
+    trim-messages.ts    history truncation
+    check-compat.ts     advisory peer-version check for contributing plugins
+    model-tag.ts        model id matching for health checks
+    json-coercible.ts   Zod helper for JSON-string tolerance
+  mcp/
+    index.ts            registration entry point
+    register-tools.ts   registry -> official MCP server
+    register-resources.ts
+    permissions.ts      one admin action per tool
+    naming.ts           camelCase -> snake_case, action slugs, display names
+    access.ts           risk tiers (metadata only)
+    size-guard.ts       ~1MB MCP response ceiling
+  tools/
+    index.ts            registry -> AI SDK ToolSet, with the RBAC filter
+    definitions/        14 built-in tool definitions
+  tool-logic/           the implementations, independent of both surfaces
 
-    Chat["Chat.tsx"] --> UC
-    Chat --> UAP
-    Chat --> UTR
-    Chat --> UAA
-
-    UC -->|"POST /chat"| Server
-    UC -->|"SSE parsing"| SSEUtils["sse.ts"]
-    UAP -->|"POST /tts"| Server
-    UAA -->|"context"| AvatarProvider["AvatarAnimationProvider"]
+admin/src/
+  index.ts              menu link + plugin registration
+  pages/                App (routes), HomePage, MemoryStore, NoteStore, PublicMemoryStore
+  components/           Chat and its parts
+  hooks/                useChat, useConversations, useMemories, useNotes, useToolSources
+  utils/                auth, per-resource API clients
 ```
 
-| Hook | Purpose | Key Returns |
-|------|---------|-------------|
-| `useChat` | Message state, SSE streaming, tool call tracking | `messages`, `sendMessage`, `isLoading`, `error` |
-| `useAudioPlayer` | TTS fetch, Audio playback | `speak(text)`, `stop()`, `isPlaying` |
-| `useTextReveal` | Progressive text reveal synced to audio duration | `visibleText`, `startReveal(text, duration)`, `reset()` |
-| `useAvatarAnimation` | Context consumer for animation triggers | `trigger(name)`, `clearAnimation()` |
-
-**SSE Protocol (UI Message Stream v1):**
-
-The `sse.ts` utility parses the AI SDK streaming format:
-
-| Event Type | Data | Usage |
-|------------|------|-------|
-| `text-delta` | `{ delta: string }` | Accumulated into message content |
-| `tool-input-available` | `{ toolCallId, toolName, input }` | Added to message's toolCalls array |
-| `tool-output-available` | `{ toolCallId, output }` | Updates toolCalls output field |
+The split between `tools/definitions/` and `tool-logic/` is deliberate. A
+definition is metadata — name, description, schema, flags. The logic is a plain
+function of `(strapi, args)` that knows nothing about registries, MCP or chat,
+which is what makes it directly testable.
 
 ---
 
-### Avatar 3D System
+## Lifecycle
+
+`register()` is empty. All initialization is in `bootstrap()`, in this order:
 
 ```mermaid
-graph TB
-    subgraph Avatar3D["Avatar3D.tsx"]
-        Renderer["WebGLRenderer"]
-        Scene["Scene"]
-        Camera["PerspectiveCamera"]
-        Controls["OrbitControls"]
-        GLBLoader["GLTFLoader"]
-        Fallback["PlaceholderModel"]
-    end
-
-    subgraph Model["Loaded Model"]
-        Bones["Bone References<br/>(hips, head, leftArm, rightArm)"]
-        RestPose["Captured Rest Pose"]
-    end
-
-    subgraph AnimLoop["Animation Loop (RAF)"]
-        IdleClip["Idle Clip (always running)"]
-        ActiveClip["Active Clip (optional)"]
-    end
-
-    GLBLoader -->|"success"| Model
-    GLBLoader -->|"error"| Fallback
-    Fallback --> Model
-    Model --> AnimLoop
-    AvatarContext["AvatarAnimationContext"] -->|"trigger(animation)"| AnimLoop
+flowchart TD
+  A[bootstrap] --> B[initializeProvider]
+  B --> C[initializeToolRegistry<br/>register 14 built-ins]
+  C --> D[discoverPluginTools<br/>scan every other plugin for ai-tools]
+  D --> E[registerAiSdkMcpTools]
+  E --> F[registerMcpAdminPermissions]
+  F --> G[registerToolsOnMcp]
+  G --> H[registerResourcesOnMcp]
 ```
 
-**Custom Avatar Model (optional):**
+The order is not cosmetic. Discovery must finish before MCP registration,
+because the official MCP server locks its capability set when it starts — a tool
+discovered afterwards would never appear. And permissions must be registered
+before tools, because the server gates each tool behind an action string that
+has to exist in the admin permission registry first.
 
-The plugin includes a built-in procedural avatar that works out of the box. To use a custom `.glb` model instead:
-
-1. Place your `.glb` file at `<strapi-project>/public/models/avatar.glb`
-2. Restart Strapi
-
-The plugin will automatically detect and load it. If the file is missing, you'll see a console message and the built-in avatar is used. To always use the built-in avatar, set `MODEL_PATH = null` in `Avatar3D.tsx`.
-
-**Why raw Three.js instead of React Three Fiber?**
-
-R3F's custom React reconciler is incompatible with Strapi's React 18 runtime (even R3F v8). It causes `Cannot read properties of undefined (reading 'S')` at runtime. The plugin uses imperative Three.js with `useRef`/`useEffect` instead.
+The whole MCP branch is wrapped in one try/catch that degrades to a logged
+error. Reading `strapi.ai?.mcp` or calling `isEnabled()` must never be able to
+crash boot: `strapi.ai` is absent below Strapi 5.47, and a host shape change
+across versions should cost you MCP tools, not the application.
 
 ---
 
-### Animation System
+## The provider layer
 
-All animations are **procedural** (no keyframe files) and **additive** (layered on top of the rest pose):
-
-```mermaid
-graph TB
-    subgraph Registry["animationRegistry"]
-        idle["idle (infinite)<br/>Breathing + sway"]
-        speak["speak (infinite)<br/>Head nod + gestures"]
-        wave["wave (2.5s)<br/>Arm raise + wave"]
-        nod["nod (2s)<br/>Head pitch x3"]
-        think["think (3.5s)<br/>Head tilt + arm to chin"]
-        celebrate["celebrate (3s)<br/>Arms up + bounce"]
-        shake["shake (1.5s)<br/>Head rotation L-R-L"]
-        spin["spin (2s)<br/>Full 360 rotation"]
-    end
-
-    subgraph Pipeline["Animation Pipeline"]
-        RestPose["Rest Pose<br/>(captured at init)"]
-        Additive["applyAdditiveRotation()<br/>Euler offset on rest quaternion"]
-        Bone["Target Bone"]
-    end
-
-    Registry -->|"factory(refs, rest)"| Clip["AnimationClip"]
-    Clip -->|"update(delta)"| Pipeline
-    RestPose --> Additive
-    Additive --> Bone
-
-    subgraph Lifecycle["Clip Lifecycle"]
-        Create["Create clip"]
-        Update["update(delta) per frame"]
-        Done["Returns true = finished"]
-        Remove["Clip removed, clearAnimation()"]
-    end
-
-    Create --> Update --> Done --> Remove
-```
-
-The **idle** animation runs perpetually as the background layer. When a named animation is triggered, it creates an **active clip** that runs on top of idle. When the active clip's `update()` returns `true`, it's removed and `clearAnimation()` resets to idle.
-
----
-
-## Data Flows
-
-### Chat Request Flow
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant ChatUI as Chat UI
-    participant useChat
-    participant Controller
-    participant Service
-    participant AIProvider
-    participant Claude as Claude API
-
-    User->>ChatUI: Types message, clicks Send
-    ChatUI->>useChat: sendMessage(text)
-    useChat->>useChat: Append user + empty assistant message
-    useChat->>Controller: POST /chat {messages}
-
-    Note over Controller: Guardrail middleware runs first
-    Controller->>Controller: extractUserInput() + runGuardrails()
-    alt Blocked
-        Controller-->>useChat: SSE stream with blocked message
-    end
-
-    Controller->>Controller: validateChatBody()
-    Controller->>Service: chat(messages, {system, ability: ctx.state.userAbility})
-    Service->>Service: createTools(strapi, {ability}) from ToolRegistry
-    Note over Service: RBAC — tools the admin's role does not<br/>grant are never handed to the model
-    Service->>Service: composeSystemPrompt()
-    Service->>AIProvider: streamRaw({messages, system, tools})
-    AIProvider->>Claude: streamText() -> Anthropic API
-    Claude-->>AIProvider: Stream chunks
-    AIProvider-->>Controller: StreamTextRawResult
-    Controller-->>useChat: SSE stream (UI Message Stream v1)
-
-    loop For each SSE event
-        useChat->>useChat: text-delta -> update message content
-        useChat->>useChat: tool-input-available -> add to toolCalls
-        useChat->>useChat: tool-output-available -> update output
-    end
-
-    useChat-->>ChatUI: Re-render with updated messages
-```
-
-### MCP Request Flow
-
-This plugin does not handle individual MCP requests at all anymore — Strapi's
-own MCP service owns the request path end to end. The only thing this plugin
-contributes at request time is the `createHandler` closure it registered at
-boot for each tool. See [MCP Server](#mcp-server)
-above for the full boot-time registration sequence and the request-time
-handler path.
-
-```mermaid
-sequenceDiagram
-    participant Client as MCP Client
-    participant MCP as strapi.ai.mcp<br/>(Strapi core)
-    participant Handler as Registered handler<br/>(closure from mcp/register-tools.ts)
-    participant Logic as Tool Logic
-    participant DB as Strapi DB
-
-    Client->>MCP: POST /mcp {tools/call, name, args} + Bearer admin token
-    MCP->>MCP: authorize against tool's auth.policies action
-    MCP->>Handler: invoke registered handler(args)
-    Handler->>Logic: def.execute(args, strapi)
-    Logic->>DB: strapi.documents().findMany/create/update
-    DB-->>Logic: Results
-    Logic-->>Handler: Tool result
-    Handler->>Handler: guardSize() — oversized results become a paginate-hint error
-    Handler-->>MCP: { content, structuredContent }
-    MCP-->>Client: JSON-RPC response
-```
-
-### Voice Mode Flow
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Chat as Chat.tsx
-    participant useChat
-    participant useAudio as useAudioPlayer
-    participant useReveal as useTextReveal
-    participant TTS as TTS Endpoint
-    participant Avatar as Avatar3D
-
-    User->>Chat: Sends message (voice enabled)
-    Chat->>Chat: awaitingAudio = true
-    Chat->>useChat: sendMessage(text)
-
-    Note over useChat: Stream completes...
-    useChat-->>Chat: onStreamEnd(fullText)
-    Chat->>useAudio: speak(fullText)
-    useAudio->>TTS: POST /tts {text}
-    TTS-->>useAudio: audio/wav Buffer
-    useAudio->>useAudio: Create Audio element, play()
-
-    useAudio-->>Chat: onPlayStart(duration)
-    Chat->>Avatar: trigger('speak')
-    Chat->>useReveal: startReveal(fullText, duration)
-    Chat->>Chat: awaitingAudio = false
-
-    loop During playback
-        useReveal->>useReveal: RAF: advance to next word boundary
-        useReveal-->>Chat: visibleText (partial)
-        Chat-->>User: Shows word-by-word text
-    end
-
-    useAudio-->>Chat: onPlayEnded()
-    Chat->>Avatar: clearAnimation()
-```
-
-### Animation Flow
-
-```mermaid
-sequenceDiagram
-    participant Stream as SSE Stream
-    participant useChat
-    participant Context as AvatarAnimationContext
-    participant Avatar3D
-    participant AnimReg as animationRegistry
-
-    Stream-->>useChat: tool-input-available {triggerAnimation, {animation: "wave"}}
-    useChat->>Context: trigger("wave")
-    Context->>Context: currentAnimation = "wave", requestId++
-
-    Avatar3D->>Avatar3D: useEffect [currentAnimation, requestId]
-    Avatar3D->>Avatar3D: Reset activeClip = null
-    Avatar3D->>AnimReg: animationRegistry.wave(refs, rest)
-    AnimReg-->>Avatar3D: new AnimationClip
-
-    loop RAF loop
-        Avatar3D->>Avatar3D: idleClip.update(delta) [always runs]
-        Avatar3D->>Avatar3D: activeClip.update(delta)
-        alt Clip returns true (finished)
-            Avatar3D->>Avatar3D: activeClip = null
-            Avatar3D->>Context: clearAnimation()
-        end
-    end
-```
-
----
-
-## Extending the Plugin
-
-### Adding a Custom Tool
-
-**Option A: Add a built-in tool** (inside the plugin)
-
-Create a new file in `tools/definitions/` and add it to the barrel:
+`lib/ai-provider.ts` holds a static registry of named provider creators and
+resolves one lazily.
 
 ```typescript
-// tools/definitions/analyze-content.ts
-import { z } from 'zod';
-import type { ToolDefinition } from '../../lib/tool-registry';
-
-export const analyzeContentTool: ToolDefinition = {
-  name: 'analyzeContent',
-  description: 'Analyze content quality and suggest improvements',
-  schema: z.object({
-    contentType: z.string().describe('Content type UID'),
-    documentId: z.string().describe('Document ID to analyze'),
-  }),
-  execute: async (args, strapi) => {
-    const doc = await strapi.documents(args.contentType).findOne({
-      documentId: args.documentId,
-    });
-    // Your analysis logic here...
-    return { score: 85, suggestions: ['Add more headings', 'Improve readability'] };
-  },
-  internal: false, // Set to true to hide from MCP
-};
-```
-
-Then add it to the barrel in `tools/definitions/index.ts`:
-
-```typescript
-import { analyzeContentTool } from './analyze-content';
-
-export const builtInTools: ToolDefinition[] = [
-  // ...existing tools
-  analyzeContentTool,
-];
-```
-
-**Option B: Register at runtime** (from your Strapi app or another plugin)
-
-```typescript
-// src/index.ts (your Strapi app)
-import { z } from 'zod';
-
-export default {
-  bootstrap({ strapi }) {
-    const plugin = strapi.plugin('ai-sdk');
-    plugin.toolRegistry.register({
-      name: 'analyzeContent',
-      description: 'Analyze content quality and suggest improvements',
-      schema: z.object({
-        contentType: z.string().describe('Content type UID'),
-        documentId: z.string().describe('Document ID to analyze'),
-      }),
-      execute: async (args, strapi) => {
-        const doc = await strapi.documents(args.contentType).findOne({
-          documentId: args.documentId,
-        });
-        return { score: 85, suggestions: ['Add more headings'] };
-      },
-    });
-  },
-};
-```
-
-Either way, the tool is automatically available in:
-- **AI Chat** (via `createTools()` which reads `getAll()`, filtered by the
-  calling admin's role grants)
-- **MCP** (via the boot-time bridge in `mcp/register-tools.ts`, which reads
-  `getPublic()` — skipped for `internal: true` tools — and gates the tool
-  behind its own `plugin::<owner>.tool.<slug>` action; see
-  [`docs/plugin-contract.md`](./plugin-contract.md))
-
-A permission action is registered for the new tool automatically, under the
-**owning plugin's** section in Settings → Roles. Nothing needs to be declared
-by hand. Note that the action starts **ungranted** — a brand-new tool is
-invisible to every role and token until someone ticks it.
-
-No changes to `tools/index.ts` or `mcp/register-tools.ts` needed — the bridge
-picks up newly-registered tools automatically the next time Strapi boots.
-MCP tool registration only happens once, at boot; a tool registered at
-runtime after boot (e.g. from another plugin's `bootstrap()` running later)
-will not retroactively appear on `/mcp` until the next restart.
-
-### Adding an AI Provider
-
-```typescript
-// src/index.ts
-import { createOpenAI } from '@ai-sdk/openai';
-import { AIProvider } from 'ai-sdk/server';
-
-export default {
-  register({ strapi }) {
-    // Register BEFORE bootstrap runs
-    AIProvider.registerProvider('openai', ({ apiKey, baseURL }) => {
-      const provider = createOpenAI({ apiKey, baseURL });
-      return (modelId: string) => provider(modelId);
-    });
-  },
-};
-```
-
-Then in `config/plugins.ts`:
-
-```typescript
-export default {
-  'ai-sdk': {
-    config: {
-      anthropicApiKey: env('OPENAI_API_KEY'), // reuses same config field
-      provider: 'openai',
-      chatModel: 'gpt-4o',
-    },
-  },
-};
-```
-
-### Adding a TTS Provider
-
-```typescript
-// src/index.ts
-export default {
-  bootstrap({ strapi }) {
-    const plugin = strapi.plugin('ai-sdk');
-
-    plugin.ttsRegistry.register('elevenlabs', (config) => ({
-      async synthesize(text, options) {
-        // Call ElevenLabs API...
-        return audioBuffer;
-      },
-    }));
-
-    // Optionally set as the active provider
-    plugin.ttsProvider = plugin.ttsRegistry.create('elevenlabs', {
-      apiKey: process.env.ELEVENLABS_API_KEY,
-      voiceId: 'some-voice-id',
-    });
-  },
-};
-```
-
-### Customizing the System Prompt
-
-**Option A: Simple replacement**
-
-```typescript
-// config/plugins.ts
-export default {
-  'ai-sdk': {
-    config: {
-      systemPrompt: 'You are a friendly content editor for our blog platform.',
-      // Tool descriptions will be appended automatically
-    },
-  },
-};
-```
-
-**Option B: Using the `{tools}` placeholder**
-
-```typescript
-export default {
-  'ai-sdk': {
-    config: {
-      systemPrompt: `You are a blog content assistant.
-
-IMPORTANT RULES:
-- Always use friendly, casual language
-- Never create content without asking for confirmation first
-
-{tools}
-
-When listing content types, summarize them in a table format.`,
-    },
-  },
-};
-```
-
-**Option C: Per-request override** (via API)
-
-```bash
-curl -X POST http://localhost:1337/api/ai-sdk/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [...],
-    "system": "You are a technical documentation writer."
-  }'
-```
-
-Per-request `system` takes priority over config `systemPrompt`.
-
-### Enabling and Scoping MCP
-
-There is no plugin-level session tuning anymore — this plugin no longer owns
-the transport, so there is nothing here to configure. The only switch is on
-the host application, in `config/server.ts` (not `config/plugins.ts`):
-
-```typescript
-// config/server.ts
-export default ({ env }) => ({
-  host: env('HOST', '0.0.0.0'),
-  port: env.int('PORT', 1337),
-  mcp: {
-    enabled: true,
-  },
+AIProvider.registerProvider('anthropic', ({ apiKey, baseURL }) => {
+  const provider = createAnthropic({ apiKey, baseURL });
+  return (modelId: string) => provider(modelId);
 });
 ```
 
-Scoping which tools a given client can reach is done per **Admin API token**,
-by granting that token the individual `plugin::<owner>.tool.<slug>` actions
-for the tools it should see — not through plugin config. A token granted two
-actions lists exactly two tools from `tools/list`; the rest are invisible to
-it, not merely un-callable.
+Two are registered in `bootstrap()`: `anthropic` and `openai-compatible`. A host
+app registers its own through the `provider` service:
 
-This is the external half of [The Permission Model](#the-permission-model) —
-grants on a **token** scope MCP, grants on a **role** scope internal chat.
-See [`docs/plugin-contract.md`](./plugin-contract.md).
+```typescript
+// src/index.ts
+register({ strapi }) {
+  strapi.plugin('ai-sdk').service('provider').register('my-model', creator);
+}
+```
+
+**Resolution is deferred to first model use**, not done at `initialize()`. That
+is what makes registration timing irrelevant — a host app registering from its
+own `register()` or `bootstrap()` works either way, in any order relative to
+this plugin's bootstrap. `ensureModelFactory()` resolves on demand and throws a
+message naming the registered providers if the name is unknown.
+
+Three behaviours worth knowing:
+
+**A blank `baseURL` is treated as absent.** `env('AI_BASE_URL')` returns `""`
+for a variable that exists but is empty, and an empty string still counts as set
+by the time it reaches a provider — the Anthropic SDK joins it with the request
+path and calls `/messages`, which fails as `Invalid URL` rather than as the
+configuration mistake it is.
+
+**Self-hosted runtimes need no API key.** Ollama, vLLM and LM Studio accept any
+bearer token or none. For `openai-compatible` the required field is `baseURL`;
+for everything else it is `apiKey`. Missing either disables AI features with a
+warning rather than throwing.
+
+**Sampling parameters are omitted unless configured.** `temperature`, `topP`,
+`topK`, `frequencyPenalty`, `presencePenalty`, `seed` and `providerOptions` are
+each spread in only when defined. Newer Anthropic models reject `temperature`
+outright, so carrying a default broke every request on the current default
+model.
+
+`apiKey` is provider-neutral and preferred. `anthropicApiKey` still works as a
+fallback and logs a one-time deprecation warning.
+
+---
+
+## The tool registry
+
+A `ToolDefinition` is:
+
+```typescript
+interface ToolDefinition {
+  name: string;
+  description: string;
+  schema: z.ZodObject<any>;
+  execute: (args, strapi, context?) => Promise<unknown>;
+  internal?: boolean;      // chat only, never exposed over MCP
+  publicSafe?: boolean;    // risk metadata; grants nothing
+  access?: AccessTier;     // 'read' | 'write' | 'destructive' | 'maintenance'
+}
+```
+
+`ToolRegistry` is a `Map` plus a second map of per-source metadata. The
+distinctions that matter:
+
+- `getAll()` — everything. Used to build the chat tool set.
+- `getPublic()` — everything without `internal: true`. Used for MCP registration
+  and for building the permission actions, so a tool and its permission cannot
+  drift apart.
+- `getToolSources()` — tools grouped by their `<source>__` prefix, which drives
+  the tool-source toggles in the chat toolbar.
+
+**14 built-in tools.** Eight reach MCP:
+
+`listContentTypes`, `searchContent`, `findOneContent`, `aggregateContent`,
+`createContent`, `updateContent`, `uploadMedia`, `sendEmail`
+
+Six are `internal: true` — chat-only bookkeeping scoped to the calling admin's
+own rows: `saveMemory`, `recallMemories`, `recallPublicMemories`, `saveNote`,
+`recallNotes`, `manageTask`.
+
+### `publicSafe` grants nothing
+
+It used to decide what anonymous public chat could reach, which failed open: a
+tool author forgetting the flag was the only thing between a visitor and a write
+tool. Anonymous chat now lives in a separate plugin with an explicit allow-list.
+
+What survives is risk metadata. `tierFor()` reads
+`access ?? (publicSafe ? 'read' : 'write')` to label a tool in the permissions
+grid and to decide which tools get withdrawn after a successful write. It is a
+hint for a human, not a boundary.
+
+`maintenance` is never derived. A tool lands there only by an explicit
+`access: 'maintenance'`, because "expensive to run" is not inferable the way
+"read-only" is — a read-only semantic search that calls a paid embeddings API
+per query belongs there on cost grounds alone.
+
+---
+
+## Plugin tool discovery
+
+At boot, every other installed plugin is checked for a service named
+`ai-tools`:
+
+```typescript
+strapi.plugin(pluginName)?.service?.('ai-tools')
+```
+
+If it exists and exposes `getTools()`, the returned definitions are registered
+under a namespace: `<pluginName>__<toolName>`, with any character outside
+`[a-zA-Z0-9_-]` in the plugin name replaced by `_`. A double underscore is the
+separator because tool names are restricted to that character class, so it
+cannot collide with a camelCase name.
+
+Definitions missing `name`, `execute` or `schema` are skipped with a warning.
+Duplicates are skipped rather than overwriting. A throw anywhere in one plugin's
+discovery is caught and logged — one bad plugin cannot stop the others being
+found.
+
+An optional `getMeta()` returning `{ label, description, keywords? }` is stored
+as source metadata and surfaces in the tool-guide MCP resource.
+
+`checkPluginCompat()` compares the contributing plugin's declared
+`peerDependencies['strapi-plugin-ai-sdk']` against this plugin's actual version.
+It is advisory: a mismatch warns, never blocks.
+
+Full contract in [plugin-contract.md](./plugin-contract.md).
+
+---
+
+## The permission model
+
+**One admin action per MCP-exposed tool**, plus one for the tool guide:
+
+```
+plugin::<owning-plugin>.tool.<action-slug>
+```
+
+`<owning-plugin>` is the plugin that contributed the tool, not always `ai-sdk`.
+A tool from `ai-sdk-yt-transcripts` registers as
+`plugin::ai-sdk-yt-transcripts.tool.fetch-transcript`, appearing in that
+plugin's own section of the permissions grid. This keeps the ai-sdk section
+listing only what it owns.
+
+`<action-slug>` is the MCP name with its source prefix stripped and underscores
+swapped for hyphens, because Strapi's admin action uid validator accepts only
+lowercase letters, dots and hyphens. The grid groups them under the subcategory
+**AI tools** — deliberately not "MCP tools", since the same actions gate
+in-Strapi chat.
+
+### The same action gates three call sites
+
+| Call site | Caller | Effect of an ungranted action |
+|---|---|---|
+| `mcp/register-tools.ts` | Admin API token | Tool absent from `tools/list` |
+| `tools/index.ts` | Admin user's role | Tool never offered to the model |
+| `controllers/controller.ts` | Admin user's role | Source hidden from the toolbar picker |
+
+This is why `actionForTool()` lives in `lib/`, not `mcp/` — only one of the
+three is MCP.
+
+The third exists because without it the chat UI offers toggles for tools the
+caller cannot use, and turning one on appears to do nothing.
+
+### Internal tools are exempt
+
+`buildMcpActionDefs()` walks `getPublic()`, so no action is ever registered for
+an `internal` tool. Gating them in chat would therefore withhold them from
+everyone including Super Admin, since the action they would need does not exist
+to be granted. `tools/index.ts` skips the check for them explicitly.
+
+### An empty tool list is the normal upgrade symptom
+
+Registering actions and granting them are different things. A token holding none
+of these actions gets a successful but **empty** `tools/list` — no error, and
+the boot logs still read as success.
+
+That is exactly the state an upgrade lands in, because Strapi prunes permission
+rows whose action id no longer exists, and the pre-1.2.0 scheme used four tier
+actions (`plugin::ai-sdk.mcp.read` and friends) that are gone.
+`warnIfNothingGranted()` counts rows in `admin::permission` matching any
+registered action and logs a warning naming the fix. It is advisory and never
+throws.
+
+One table covers both callers: `admin::permission` holds role grants and admin
+token grants alike. `admin::api-token-permission` belongs to content-API tokens
+serving `/api/*`, which never hold `.tool.` actions.
+
+---
+
+## The system prompt
+
+`composeSystemPrompt()` assembles three pieces:
+
+```
+base                 override ?? config.systemPrompt ?? DEFAULT_PREAMBLE
++ tool descriptions  substituted into {tools} if present, else appended
++ TOOL_DISCIPLINE    always appended last
+```
+
+`DEFAULT_PREAMBLE` covers role, the analytics-vs-search steer, Strapi filter
+syntax for relations, and proactive task handling.
+
+`TOOL_DISCIPLINE` is appended rather than substituted, and that is the whole
+point of it. A site setting `systemPrompt` for tone used to silently lose every
+piece of tool guidance the plugin ships. Replacing the base prompt is right for
+role and voice; dropping the rules that keep a tool loop honest is not.
+
+Each of its rules answers an observed failure, not a hypothetical: a model that
+announced "I will now save this draft" and ended its turn; one that reported a
+save that never happened after a single rejected write; one that sent a value to
+a field whose limit it had already been told.
+
+Tool descriptions are generated from the live tool set by `describeTools()`, so
+they cannot drift from what is actually registered.
+
+`buildPreamble()` assembles the system prompt and tool set exactly as a chat
+request would, and is shared with the context report — a separate approximation
+would drift, and a budget number that is quietly wrong is worse than none.
+
+---
+
+## A chat request, end to end
+
+```mermaid
+sequenceDiagram
+  participant P as Admin panel
+  participant G as Guardrail middleware
+  participant C as controller.chat
+  participant S as service.chat
+  participant M as Model
+
+  P->>G: POST /ai-sdk/chat (UIMessage[])
+  G->>G: extract last user text, normalize, match patterns
+  alt blocked
+    G-->>P: 200 SSE text-delta with the refusal
+  else allowed
+    G->>C: next()
+    C->>S: messages, adminUserId, ability, enabledToolSources
+    S->>S: trimMessages -> convertToModelMessages
+    S->>S: createTools (RBAC + source filter)
+    S->>S: composeSystemPrompt + user memories
+    S->>M: streamText, stopWhen stepCountIs(maxSteps)
+    M-->>S: text / reasoning / tool-call parts
+    S-->>C: StreamTextRawResult
+    C-->>P: toUIMessageStreamResponse + usage metadata
+  end
+```
+
+Details that matter:
+
+**History is trimmed, not truncated blindly.** `trimMessages()` keeps the last
+`maxConversationMessages` (default 15) and then drops leading assistant messages
+carrying orphaned tool calls, since the AI SDK throws `MissingToolResultsError`
+on a tool call whose result was sliced away.
+
+**Memories are injected per request.** For an authenticated admin, rows in
+`plugin::ai-sdk.memory` filtered to that `adminUserId` are appended to the
+system prompt. A failure here warns and continues; it never fails the request.
+
+**Tool errors are rethrown, not returned.** `createTools()` wraps every
+`execute` and rethrows through `describeToolFailure()`, which flattens Strapi's
+`details.errors` into the message. Strapi summarises multi-field validation as
+"3 errors occurred" and keeps the causes in a field the AI SDK never serialises,
+so a model handed that count can only guess again. Rethrowing rather than
+returning is what marks the step a tool error, which is what lets the model
+retry.
+
+**Usage rides back on the finish part.** `toUIMessageStreamResponse()` is given
+a `messageMetadata` callback that attaches
+`{ inputTokens, outputTokens, totalTokens }` to the assistant message on
+`finish`. Without it the panel has no idea what a turn cost, and the point at
+which a conversation stops fitting arrives with no warning.
+
+**The response is a Web stream converted for Koa** via `Readable.fromWeb`, with
+`x-vercel-ai-ui-message-stream: v1` and `X-Accel-Buffering: no` set so proxies
+do not buffer it.
+
+---
+
+## Stopping a turn
+
+Three mechanisms, covering three different ways a turn goes wrong.
+
+### The Stop button
+
+`useChat` exposes the SDK's own `stop()`, and `ChatInput` swaps Send for Stop
+while a turn is running — replacing it rather than sitting beside it, since a
+disabled Send with a spinner offers no way out of exactly the state the button
+exists for. Whatever streamed in before the stop stays in the conversation: a
+half-written answer is more useful than none, and it records which tools ran.
+
+### Server-side abort
+
+A client stop only aborts the browser's fetch. On its own that leaves the server
+streaming into a socket nobody is reading, the model still generating, and the
+remaining tool calls still running — a stopped turn that goes on costing tokens
+and still writes whatever it was about to write.
+
+So `controller.chat` wires an `AbortController` to the response and passes the
+signal to `streamText`, which cancels the run and every step after it. The SDK
+also hands that signal to each tool's `execute`, so a tool can cancel its own
+work.
+
+The listener is on `ctx.res`, not `ctx.req`, guarded by `writableFinished`:
+
+```typescript
+ctx.res.once('close', () => {
+  if (!ctx.res.writableFinished) abort.abort();
+});
+```
+
+`req`'s `'close'` also fires on a normally completed request in current Node,
+which would abort every healthy stream. The response-side check distinguishes
+"the client went away" from "we finished sending".
+
+### Tool timeouts
+
+The one that matters most, because it needs nobody watching.
+
+Nothing else bounds a tool call. A network call with no timeout of its own —
+a transcript fetch against a host that has started blocking you — hangs the
+whole turn: a spinner on a tool that will never settle, a step that never
+completes, and no error anywhere to explain it.
+
+`createTools()` races every `execute` against `toolTimeoutMs` (default 60,000;
+`0` disables it). On expiry the derived signal is aborted and the call rejects
+with a message naming the tool and the elapsed time, plus an instruction not to
+assume it succeeded. Because tool errors are rethrown rather than returned, that
+reaches the model as an ordinary tool error it can report or retry.
+
+A tool that honours its `abortSignal` stops immediately. One that ignores it
+keeps running in the background — the turn is freed either way, which is the
+point.
+
+---
+
+## Withdrawing a tool after a write
+
+Models re-plan from scratch on every step. After `createContent` returns,
+nothing in the conversation says the work is finished and the tool is still on
+the table, so calling it again is a plausible next move. Observed against
+`qwen3.6-35b`: three or four `createContent` calls for one article, then a
+summary. When the step limit interrupts that loop the turn ends with
+`finishReason: 'tool-calls'` and no text, which renders as an empty message.
+
+`closeToolsAfterWrite()` builds a `prepareStep` handler that removes any
+mutating tool which has already **returned a result**:
+
+- Mutating means `tierFor(def) !== 'read'` — derived from the same metadata as
+  permissions.
+- It keys on `toolResults`, not `toolCalls`, so a tool that threw stays
+  available for a corrected retry.
+- It returns `{ activeTools }`, not `{ tools }`. `PrepareStepResult` has no
+  `tools` field, so returning one is silently ignored and the model keeps
+  everything.
+
+Read tools are never withdrawn — re-reading is legitimate, whether searching
+again with different filters or fetching the document just created.
+
+---
+
+## The MCP surface
+
+`registerToolsOnMcp()` walks `getPublic()` and registers each tool:
+
+```typescript
+mcp.registerTool({
+  name: toSnakeCase(name),
+  title: toTitle(name),
+  description: def.description,
+  resolveInputSchema: () => def.schema,
+  resolveOutputSchema: () => LOOSE_OUTPUT,
+  auth: { policies: [{ action: actionForTool(name) }] },
+  createHandler: (strapi) => async ({ args }) => { ... },
+});
+```
+
+**Zod 4 schemas are handed over untouched.** The MCP SDK detects Zod 4 by
+duck-typing and converts with its own bundled `zod/v4-mini`. Adding a conversion
+layer would strip `.describe()` text, which is most of what tells a model how to
+call the tool.
+
+**Output schemas are deliberately loose.** `resolveOutputSchema` is required and
+must be a `ZodObject`, but these tools return heterogeneous shapes, so one
+permissive `z.object({}).catchall(z.any())` satisfies the contract for all of
+them. Because it must be an object, array and scalar results are wrapped as
+`{ result }` for `structuredContent`.
+
+**Each registration gets its own try/catch.** The capability registry throws
+synchronously on conflicts — a duplicate name across plugins, a missing auth
+policy. One bad tool must not take down the registration pass or Strapi's boot,
+so failures skip and continue with a warning.
+
+**Errors are a separate branch of the union**: `isError: true` with no
+`structuredContent`, never both.
+
+### Naming
+
+| Function | Purpose | Example |
+|---|---|---|
+| `toSnakeCase` | registry name -> MCP name | `searchContent` -> `search_content` |
+| `toTitle` | human title | `Strapi: Search Content` |
+| `toBareMcpName` | strip source prefix | `..._yt__fetch_transcript` -> `fetch_transcript` |
+| `toActionSlug` | permission uid tail | `fetch-transcript` |
+| `toDisplayName` | grid checkbox label | `Fetch transcript` |
+| `getToolSource` | owning plugin, or `built-in` | |
+
+The asymmetry is intentional: MCP names stay snake_case, action slugs use
+hyphens, because Strapi's uid validator rejects underscores.
+
+### The size guard
+
+MCP clients reject a tool result over roughly 1 MB with an opaque error the
+agent cannot act on. `guardSize()` replaces an oversized result with a
+structured notice naming the tool, the size, the limit and a per-tool hint for
+making the next call smaller.
+
+The measurement doubles the serialized size, because the result rides the wire
+twice — once as JSON text in `content`, once as `structuredContent`. The ceiling
+is `MAX_WIRE_BYTES = 950_000`.
+
+### The tool guide resource
+
+The official server does not let plugins set server-level `instructions`, so the
+usage guidance the retired custom server used to send lives in a resource at
+`strapi://ai-sdk/tools/guide`, gated by its own `plugin::ai-sdk.tool.guide`
+action. It is generated per read, so newly discovered plugin tools appear
+without a restart.
+
+---
+
+## Guardrails
+
+A Koa middleware registered as `plugin::ai-sdk.guardrail` and attached to
+`POST /chat` only. Full detail in [guardrails.md](./guardrails.md); the shape:
+
+1. `beforeProcess` hook, if configured — runs first and can block or sanitize.
+2. Normalize: NFKC, strip zero-width and invisible characters, collapse
+   whitespace.
+3. Match 29 default regex patterns across five categories, plus any
+   `additionalPatterns`.
+4. Length check against `maxInputLength` (default 10,000).
+
+A block on the chat route responds `200` with an SSE `text-delta` carrying the
+refusal, so the panel renders it as a normal assistant message rather than a
+failed request. Other routes get `403`.
+
+**MCP tool calls are not screened.** The middleware is on this plugin's chat
+route; `/mcp` is Strapi's endpoint and never passes through it.
+
+---
+
+## Storage
+
+Five content types, all scoped by `adminUserId` except `public-memory`:
+
+| Type | Collection | Holds |
+|---|---|---|
+| `conversation` | `ai_sdk_conversations` | `title`, `messages` (json), `adminUserId` |
+| `memory` | `ai_sdk_memories` | `content`, `category`, `adminUserId` |
+| `note` | `ai_sdk_notes` | `title`, `content`, `category`, `tags`, `source`, `adminUserId` |
+| `public-memory` | `ai_sdk_public_memories` | `content`, `category` |
+| `task` | `ai_sdk_tasks` | `title`, `description`, `content`, `done`, `priority`, `consequence`, `impact`, `dueDate`, `adminUserId` |
+
+### The conversation format has a contract
+
+`messages` is `"type": "json"`, so Strapi stores whatever it is handed and
+validates nothing. Before `lib/stored-messages.ts` the shape was implicitly
+whatever the admin panel's `Message` interface happened to be when a row was
+written.
+
+Storage is now a versioned envelope holding the AI SDK's `UIMessage`:
+
+```json
+{ "v": 2, "messages": [ { "id": "...", "role": "assistant", "parts": [] } ] }
+```
+
+Two reasons. The old `{ content: string, toolCalls: [] }` shape lost
+information — a turn that ran text, then a tool, then more text could not be
+reconstructed from one string with a list beside it, while an ordered `parts[]`
+can. And it is what the rest of the stack already speaks, which removes the
+translation layer where lossy bugs live.
+
+Part validation is by prefix, not enumeration: tool parts are typed
+`tool-<toolName>`, so a new tool never requires a schema change. Unrecognised
+part types — `reasoning`, `source-url`, `file`, whatever comes next — are
+preserved verbatim rather than rejected, since dropping them would damage the
+conversation for a future version that understands them.
+
+**Migration happens on read, not as a script.** `readStoredMessages()` tries the
+current envelope, falls back to the v1 bare array, and converts. It is
+deliberately total: an unparseable row returns empty rather than throwing,
+costing the user that conversation's history rather than the ability to open the
+page. `toStoredMessages()` accepts the envelope, a bare `UIMessage[]`, or the
+legacy shape on write, which is what makes rows heal by being touched.
+
+---
+
+## The context budget
+
+The most expensive failure in this plugin is invisible. A chat request carries
+the system prompt and every tool's JSON schema before the user's question —
+close to 7,000 tokens against a real app. Ollama serves a 4,096 token window
+unless the model file sets `num_ctx`, so a model advertising 262,144 tokens can
+be quietly truncated to less than the preamble needs. There is no error. The
+model hangs, or answers while ignoring its tools, and the obvious conclusion is
+that tool calling is broken.
+
+`GET /context-info` reports the numbers. It measures the preamble for **the
+calling admin**, because the tool set is filtered by their role: two admins on
+the same install face different preambles, and the one with more tools is closer
+to the edge.
+
+Window detection, in order:
+
+1. `config.contextWindow` — an explicit override wins.
+2. Ollama `/api/ps` — a loaded instance reports what it is actually serving.
+3. `num_ctx` in the model file via `/api/show`.
+4. `OLLAMA_DEFAULT_NUM_CTX` (4,096) — the case worth catching.
+
+`/api/show` also yields the trained context length, so the report can say "this
+model supports 262144 but is serving 4096".
+
+`warnAboutBudget()` fires when the preamble does not fit at all, when it exceeds
+half the window (which leaves too little for tool results and a reply), or when
+Ollama's default is silently truncating a model that supports more.
+
+Counts are estimated at four characters per token rather than measured with a
+real tokenizer. Loading one per provider would add a dependency and a startup
+cost to a number whose only job is to say whether you are near the edge. Callers
+are told it is an estimate via `estimated: true`.
+
+---
+
+## Admin panel
+
+`admin/src/index.ts` adds a menu link and registers the plugin. `App.tsx` routes
+four pages: chat (index), `memory-store`, `note-store`, `public-memory-store`.
+
+```
+HomePage
+  ModelBadge                provider/model, LOCAL badge, reachability
+  Chat
+    ConversationSidebar     list, select, new, delete
+    ChatTopBar
+      ToolSourcePicker      per-source toggles
+      ContextBadge          used vs available, amber >60%, red >90%
+    MessageList
+      ToolCallDisplay       per-tool-call rendering
+      TaskConfirmCard       inline form for task scoring
+    ChatInput
+    NotePanel / MemoryPanel slide-over panels
+```
+
+### `useChat`
+
+A thin wrapper over `@ai-sdk/react`'s own `useChat`. It configures a
+`DefaultChatTransport` and passes the SDK's state through, plus a few helpers
+for reading parts: `messageText`, `messageReasoningText`,
+`hasStreamingReasoning`, `messageToolParts`, `toolPartName`.
+
+It replaced roughly 256 lines of hand-rolled SSE parsing that handled three
+event types and silently discarded the rest — `error` among them, which is why a
+failed stream used to surface as "No response received" instead of the
+provider's actual complaint.
+
+Three things it does deliberately:
+
+**Auth headers resolve per request**, not captured once. A token refreshed
+mid-session would otherwise start returning 401s that look like a server fault.
+
+**`id` is the conversation id**, which recreates the underlying `Chat` on switch
+so a new conversation does not append to the previous one's messages.
+
+**History is seeded through `setMessages` in an effect**, not the `messages`
+option. Conversations arrive asynchronously; the SDK reads that option only when
+it constructs a `Chat`, so history arriving later was never adopted — the panel
+rendered the right number of empty bubbles because the messages existed but
+carried no parts.
+
+Saving is driven by the loading edge: when `isLoading` goes true -> false, the
+conversation is persisted and the memory and note panels refresh.
+
+### Reasoning
+
+Thinking models emit `reasoning` parts alongside tool calls and text. These are
+stored like any other part and rendered in a collapsible panel that opens itself
+while streaming and settles to "Thought for a moment" with a preview. Typing
+dots appear only when there is no reasoning to show.
+
+The empty-reply note is separate and still fires on a turn that used tools
+without answering — reasoning is not a reply.
+
+---
+
+## HTTP endpoints
+
+All routes are `type: 'admin'` and require an authenticated admin. Only `/chat`
+carries the guardrail middleware.
+
+| Method | Path | Handler |
+|---|---|---|
+| POST | `/chat` | streaming chat (guardrailed) |
+| GET | `/model-info` | provider, model, baseURL, `isLocal` |
+| GET | `/model-health` | reachability probe |
+| GET | `/context-info` | preamble cost and window report |
+| GET | `/tool-sources` | sources the caller can actually use |
+| GET/POST/PUT/DELETE | `/conversations[/:id]` | conversation CRUD |
+| GET/POST/PUT/DELETE | `/memories[/:id]` | memory CRUD |
+| GET/POST/PUT/DELETE | `/public-memories[/:id]` | shared memory CRUD |
+| GET/POST/PUT/DELETE | `/tasks[/:id]` | task CRUD |
+| GET/POST/PUT/DELETE | `/notes[/:id]`, `/notes/clear` | note CRUD |
+
+`isLocal` is inferred from the `baseURL` host — loopback, `.local`,
+`host.docker.internal` or a private range — not from the provider name.
+`openai-compatible` covers both self-hosted runtimes and hosted vendors, and
+only a private host means the content genuinely is not leaving the machine.
+
+`/model-health` probes `GET {baseURL}/models` with a 5 second timeout for
+`openai-compatible`, and confirms the configured model is actually served rather
+than merely that something answered — a renamed or unloaded model is the more
+common failure once an endpoint is up. Anthropic has no comparable free probe,
+so a configured key reports `unknown` rather than spending money to turn a badge
+green.
 
 ---
 
 ## Testing
 
-### Test Scripts
-
-The plugin uses **end-to-end integration tests** that run against a live Strapi instance. No test framework is needed -- each test is a standalone script using native `fetch`.
-
-| Script | Command | What It Tests |
-|---|---|---|
-| `test:api` | `npx tsx tests/ai-sdk.test.ts` | `/ask` and `/ask-stream` endpoints (valid requests, error handling) |
-| `test:stream` | `node tests/test-stream.mjs` | Streaming response (visual output, chunk timing) |
-| `test:chat` | `node tests/test-chat.mjs` | Chat endpoint with UI Message Stream v1 protocol |
-| `test:guardrails` | `npx tsx tests/test-guardrails.ts` | All guardrail categories (42 assertions) |
-| `test:ts:front` | `tsc -p admin/tsconfig.json` | Admin TypeScript type checking |
-| `test:ts:back` | `tsc -p server/tsconfig.json` | Server TypeScript type checking |
-| `test:e2e` | `vitest run --config vitest.e2e.config.ts tests/e2e/structural.test.ts` | MCP structural suite (vitest, not a fetch script) — tool exposure, permission-tier scoping, `.describe()` preservation, the tool-guide resource, the yt-transcripts UID coupling, no duplicate tool names. Free — no tool execution, no external API calls. |
-| `test:e2e:live` | `E2E_LIVE=1 vitest run --config vitest.e2e.config.ts` | Live pipeline: fetch a real transcript, wait for embedding, semantic-search it via MCP, trigger a chat tool call. Requires real API keys and a short known video. |
-
-Both `test:e2e` and `test:e2e:live` require a running Strapi host **>= 5.47**
-with `mcp: { enabled: true }`, all three plugins (`ai-sdk`, `-yt-transcripts`,
-`-yt-embeddings`) linked/installed, and `STRAPI_URL` /
-`STRAPI_ADMIN_TOKEN` (an admin token granting all three
-`plugin::ai-sdk.mcp.*` permissions) in the environment. **As of this
-migration, neither has been run** — see
-[`docs/plugin-contract.md`](./plugin-contract.md#9-e2e-suites--unverified-prerequisites)
-for the full prerequisite list. Do not treat their existence as proof MCP
-works end to end against a real host.
-
-### Testing Methodology
-
-**Why e2e scripts instead of unit tests?**
-
-The plugin's value is in how its components work together end-to-end: middleware intercepts requests, the AI provider streams responses, tools execute against the Strapi document API, and SSE events reach the frontend. Unit tests with mocked Strapi internals would miss integration issues while adding maintenance burden. Standalone scripts with `fetch` are simple, framework-free, and test the actual request pipeline.
-
-**Test design principles:**
-
-- **Self-contained** -- each script runs independently, no shared state
-- **Health check first** -- all scripts verify Strapi is running before testing
-- **Pass/fail output** -- clear emoji indicators, exit code 1 on failure
-- **Auth-aware** -- `STRAPI_TOKEN` env var for authenticated endpoints
-- **Smart assertions** -- guardrail tests check response body (not just status code) to distinguish guardrail blocks from permission blocks
-
-### Running Tests
-
-**Prerequisites:**
-
-1. Strapi is running (`yarn dev` in the Strapi app)
-2. Plugin is built (`npm run build` in the plugin directory)
-3. Content API endpoints are accessible (either public or via API token)
-
-**Run all tests:**
-
 ```bash
-# From the plugin directory
-npm run test:guardrails    # Guardrail safety tests
-npm run test:api           # API endpoint tests
-npm run test:stream        # Streaming visual test
-npm run test:chat          # Chat protocol test
+npm run test:unit        # vitest, no Strapi instance needed
+npm run test:ts:back     # tsc --noEmit, server
+npm run test:ts:front    # tsc --noEmit, admin
+npm run test:e2e         # structural checks
+npm run test:e2e:live    # E2E_LIVE=1, against a running instance
+npm run test:mcp-scoping # permission scoping script
 ```
 
-**With authentication:**
-
-```bash
-STRAPI_TOKEN=your-api-token npm run test:guardrails
-```
-
-**Type checking only (no running Strapi needed):**
-
-```bash
-npm run test:ts:back
-npm run test:ts:front
-```
+Unit tests use `tests/helpers/fake-strapi.ts` rather than booting Strapi, which
+is what keeps them fast enough to run on every change. Coverage sits where the
+logic is subtle rather than uniformly: `mcp/` (naming, permissions,
+registration, size guard, tool inventory), `lib/` (provider init, context
+budget, stored messages, close-tools-after-write, compat, guardrail extraction),
+and `tools/` (RBAC filtering, tool-source filtering, failure formatting).
 
 ---
 
-## File Reference
+## What used to be here
 
-```
-server/src/
-  index.ts                          # Server entry point (assembles all modules)
-  register.ts                       # No-op register lifecycle
-  bootstrap.ts                      # Initialize all registries and providers
-  destroy.ts                        # Graceful shutdown
-  config/
-    index.ts                        # Plugin config defaults and validator
-  guardrails/
-    default-patterns.json           # Built-in regex patterns (5 categories)
-    types.ts                        # GuardrailInput, GuardrailResult, GuardrailConfig
-    index.ts                        # Core logic (normalize, extract, match, run)
-    middleware.ts                    # Strapi route middleware factory
-  middlewares/
-    index.ts                        # Registers { guardrail } middleware
-  lib/
-    types.ts                        # Shared types (PluginConfig, PluginInstance, etc.)
-    ai-provider.ts                  # AIProvider class with static provider registry
-    tool-registry.ts                # ToolRegistry class + ToolContext/CallerAbility
-    utils.ts                        # Controller helpers (validation, SSE)
-    tts/
-      index.ts                      # TTSRegistry class + createTTSRegistry()
-      types.ts                      # TTSProvider interface
-      typecast-provider.ts          # Typecast API implementation
-  controllers/
-    controller.ts                   # ask, askStream, chat, tts handlers
-    (no mcp.ts — MCP has no controller in this plugin anymore)
-  services/
-    service.ts                      # AI service facade (prompt composition, tool wiring)
-  routes/
-    content-api/index.ts            # Content API routes (/ask, /ask-stream, /chat) + guardrail middleware
-    admin/index.ts                  # Admin routes (/chat, /tool-sources, conversations, memories, tasks, notes) + guardrail middleware
-    # /mcp is not a route of this plugin — it's served by Strapi core (strapi.ai.mcp)
-  tools/
-    index.ts                        # createTools() (RBAC-filtered) + describeTools()
-    definitions/
-      index.ts                      # Barrel: exports builtInTools array
-      list-content-types.ts         # listContentTypes tool definition (publicSafe)
-      search-content.ts             # searchContent tool definition (publicSafe)
-      find-one-content.ts           # findOneContent tool definition (publicSafe)
-      aggregate-content.ts          # aggregateContent tool definition (publicSafe)
-      create-content.ts             # createContent tool definition
-      update-content.ts             # updateContent tool definition
-      upload-media.ts               # uploadMedia tool definition
-      send-email.ts                 # sendEmail tool definition (access: 'destructive')
-      save-memory.ts, recall-memories.ts, recall-public-memories.ts,
-      save-note.ts, recall-notes.ts, manage-task.ts   # internal: true — chat-only, never reach MCP
-  tool-logic/
-    index.ts                        # Re-exports all tool logic
-    list-content-types.ts, search-content.ts, find-one-content.ts,
-    aggregate-content.ts, create-content.ts, update-content.ts,
-    upload-media.ts, send-email.ts, save-memory.ts, recall-memories.ts,
-    recall-public-memories.ts, save-note.ts, recall-notes.ts,
-    manage-task.ts, schema-utils.ts # pure Strapi-coupled business logic + Zod schemas
-  mcp/                              # the bridge onto Strapi's official MCP server (v1.1.0+)
-    index.ts                        # registerAiSdkMcpTools(strapi, registry) — entry point called from bootstrap.ts
-    permissions.ts                  # one admin action per tool + actionForTool(); grouped by owning plugin
-    register-tools.ts               # registerToolsOnMcp() — walks registry.getPublic(), calls strapi.ai.mcp.registerTool()
-    register-resources.ts           # registers the strapi://ai-sdk/tools/guide resource
-    access.ts                       # tierFor() — risk metadata only; no longer grants anything
-    naming.ts                       # toSnakeCase()/toTitle()/toBareMcpName()/toActionSlug() — wire + uid slugs
-    size-guard.ts                   # guardSize() — ~1MB wire-size backstop
-    resources/
-      tool-guide.ts                 # generateToolGuide() — builds the tool-guide markdown from the registry
-    utils/
-      sanitize.ts                   # Input/output sanitization for Strapi content API
+If you are reading an older copy of this document — anything under
+[`docs/old/`](./old/) — these subsystems are described there and no longer
+exist:
 
-admin/src/
-  index.ts                          # Admin entry point (menu, routes)
-  pluginId.ts                       # PLUGIN_ID constant
-  pages/
-    App.tsx                         # Router
-    HomePage.tsx                    # Main page layout
-  components/
-    Chat.tsx                        # Chat orchestrator
-    MessageList.tsx                 # Message rendering
-    ChatInput.tsx                   # Input field + voice toggle
-    ToolCallDisplay.tsx             # Collapsible tool call viewer
-    AvatarPanel.tsx                 # Left panel with 3D avatar
-    Avatar3D/
-      Avatar3D.tsx                  # Three.js renderer + animation driver
-      animations.ts                 # Procedural animation registry
-      PlaceholderModel.ts           # Fallback chibi character model
-    Initializer.tsx                 # Plugin readiness signal
-    PluginIcon.tsx                  # Menu icon
-  hooks/
-    useChat.ts                      # Chat state + SSE streaming
-    useAudioPlayer.ts               # TTS audio playback
-    useTextReveal.ts                # Progressive text reveal
-  context/
-    AvatarAnimationContext.tsx       # Animation state context
-  utils/
-    auth.ts                         # JWT token + backend URL helpers
-    sse.ts                          # SSE parser for UI Message Stream v1
-    getTranslation.ts               # i18n key helper
-  translations/
-    en.json                         # English translations (empty)
+| Removed | Where it went |
+|---|---|
+| TTS provider registry, voice mode | Removed entirely |
+| Avatar 3D system, animation system | Removed entirely |
+| Anonymous public chat | `strapi-plugin-ai-sdk-public-chat`, with an explicit tool allow-list |
+| Custom `/api/ai-sdk/mcp` transport | Strapi's official `/mcp`, since 5.47 |
+| Four-tier MCP permissions (`mcp.read` etc.) | One action per tool |
+| Hand-rolled SSE parsing in the panel | `@ai-sdk/react`'s `useChat` |
 
-tests/
-  ai-sdk.test.ts                    # /ask and /ask-stream endpoint tests
-  test-stream.mjs                   # Streaming visual test (chunk timing)
-  test-chat.mjs                     # Chat endpoint with conversation history
-  test-guardrails.ts                # Guardrail e2e tests (42 assertions)
-
-docs/
-  architecture.md                   # This file
-  guardrails.md                     # Guardrails comprehensive guide
-```
+Two loose ends remain in the source and are not documented behaviour:
+`extractUserInput()` still recognises `/ask` and `/ask-stream`, which no longer
+exist as routes, and `services/service.ts` retains `DEFAULT_PUBLIC_PREAMBLE`
+plus two public-chat constants that nothing reads.

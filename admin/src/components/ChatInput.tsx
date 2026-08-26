@@ -12,6 +12,14 @@ const InputArea = styled.div`
   border-top: 1px solid #eaeaef;
 `;
 
+const StopIcon = styled.span`
+  display: inline-flex;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: currentColor;
+`;
+
 // --- Component ---
 
 interface ChatInputProps {
@@ -19,6 +27,8 @@ interface ChatInputProps {
   isLoading: boolean;
   onInputChange: (value: string) => void;
   onSend: () => void;
+  /** Abandon the turn in progress. */
+  onStop: () => void;
 }
 
 export function ChatInput({
@@ -26,6 +36,7 @@ export function ChatInput({
   isLoading,
   onInputChange,
   onSend,
+  onStop,
 }: ChatInputProps) {
   return (
     <form
@@ -45,15 +56,32 @@ export function ChatInput({
             }
           />
         </Box>
-        <Button
-          type="submit"
-          disabled={isLoading || !input.trim()}
-          loading={isLoading}
-          size="L"
-          startIcon={<Sparkle />}
-        >
-          Send
-        </Button>
+        {/*
+          Stop replaces Send while a turn is running, rather than sitting
+          beside it. A disabled Send with a spinner gives no way out of a turn
+          that has stalled — which is the state this button exists for, so it
+          has to occupy the place the user is already looking.
+        */}
+        {isLoading ? (
+          <Button
+            type="button"
+            onClick={onStop}
+            variant="tertiary"
+            size="L"
+            startIcon={<StopIcon />}
+          >
+            Stop
+          </Button>
+        ) : (
+          <Button
+            type="submit"
+            disabled={!input.trim()}
+            size="L"
+            startIcon={<Sparkle />}
+          >
+            Send
+          </Button>
+        )}
       </InputArea>
     </form>
   );

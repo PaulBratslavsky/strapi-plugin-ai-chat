@@ -3,6 +3,37 @@
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
 
+## 2.7.0 - 2026-08-26
+
+Stops a hung tool from taking the whole turn with it, and repairs a guard that
+had silently stopped working.
+
+- **Tool calls time out.** A tool with no timeout of its own could hang a turn
+  indefinitely: the panel showed a spinner on a call that would never settle,
+  the step never completed, and nothing was logged, so the failure produced no
+  error to read. Calls now abandon after `toolTimeoutMs`, default 60 seconds,
+  and reject with a message naming the tool and telling the model to report the
+  stall rather than assume success. The tool receives the abort signal, so one
+  that honours it stops too, and the request's own signal is passed through, so
+  stopping a turn stops a tool already running rather than only the steps after
+  it.
+- **A Stop control** replaces Send while a turn is running, so a run can be
+  abandoned from the panel.
+- **History trimming was broken and inert.** It guarded against starting a
+  window on an unmatched tool call by checking for a part typed
+  `tool-invocation`, which is the AI SDK v4 name and matches nothing this
+  plugin stores or streams. The guard never fired. Parts are now recognised by
+  the shapes the SDK actually emits, `tool-<toolName>` and `dynamic-tool`, and
+  a part carrying its own result is treated as safe to lead with, since a
+  UIMessage keeps a call and its result together unlike the model message it
+  converts into.
+- **Guardrails no longer carry route handling for `/ask` and `/ask-stream`.**
+  Those moved to strapi-plugin-ai-sdk-public-chat in 2.0.0, which ships its own
+  guardrails. `validateBody`, `createSSEStream` and `writeSSE` go with them,
+  having served the content-API routes removed in the same release.
+
+Documentation rewritten throughout.
+
 ## 2.6.0 - 2026-08-24
 
 Shows the model's reasoning while it thinks.
