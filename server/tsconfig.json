@@ -4,6 +4,8 @@
     "./src"
   ],
   "compilerOptions": {
-    "rootDir": "../"
+    "rootDir": "../",
+    "module": "nodenext",
+    "moduleResolution": "nodenext"
   }
 }

@@ -5,6 +5,8 @@
     "./custom.d.ts"
   ],
   "compilerOptions": {
-    "rootDir": "../"
+    "rootDir": "../",
+    "module": "esnext",
+    "moduleResolution": "bundler"
   }
 }
