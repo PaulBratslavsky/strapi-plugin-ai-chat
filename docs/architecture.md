@@ -270,7 +270,7 @@ An optional `getMeta()` returning `{ label, description, keywords? }` is stored
 as source metadata and surfaces in the tool-guide MCP resource.
 
 `checkPluginCompat()` compares the contributing plugin's declared
-`peerDependencies['strapi-plugin-ai-sdk']` against this plugin's actual version.
+`peerDependencies['strapi-plugin-ai-chat']` against this plugin's actual version.
 It is advisory: a mismatch warns, never blocks.
 
 Full contract in [plugin-contract.md](./plugin-contract.md).

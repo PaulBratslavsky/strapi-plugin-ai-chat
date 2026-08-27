@@ -218,7 +218,7 @@ await strapi.plugin('email').service('email').send({
 });
 ```
 
-Note that `sendEmail` itself is not importable: `strapi-plugin-ai-sdk/strapi-server`
+Note that `sendEmail` itself is not importable: `strapi-plugin-ai-chat/strapi-server`
 resolves to a bundle whose only export is the Strapi plugin object. The logic in
 `tool-logic/send-email.ts` is a plain function of `(strapi, params)` with no
 dependency on the registry, chat or MCP — which is what makes it testable — but
