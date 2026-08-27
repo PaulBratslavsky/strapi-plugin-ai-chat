@@ -6,7 +6,7 @@ import adminAPIRoutes from './admin';
  * This plugin is the chat interface inside the Strapi admin panel. It
  * deliberately exposes no content-API surface: those routes were permissioned
  * per controller method, which cannot express "this caller may search but not
- * send email", and granting `controller.chat` to the Public role handed
+ * send email", and granting `chat.chat` to the Public role handed
  * anonymous visitors the full toolset.
  *
  * The two surfaces that remain both scope per tool — admin chat via RBAC
