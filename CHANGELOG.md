@@ -3,6 +3,14 @@
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
 
+## 3.0.1 - 2026-08-27
+
+Metadata only, no code change. The GitHub repository was renamed to match the
+package, so `repository`, `homepage` and `bugs` now point at
+strapi-plugin-ai-chat rather than strapi-plugin-ai-sdk. GitHub redirects the old
+URL, so nothing was broken; npm was simply displaying a link that no longer
+names the project.
+
 ## 3.0.0 - 2026-08-27
 
 **Breaking.** The plugin id changed from `ai-sdk` to `ai-chat`. A migration
