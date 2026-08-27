@@ -112,7 +112,7 @@ async function warnIfNothingGranted(strapi: Core.Strapi, actionIds: string[]): P
 
     if (grants === 0) {
       strapi.log.warn(
-        `[ai-sdk:mcp] ${actionIds.length} tool permission(s) registered, but no role or API ` +
+        `[ai-chat:mcp] ${actionIds.length} tool permission(s) registered, but no role or API ` +
           `token grants any of them. MCP clients will authenticate successfully and receive an ` +
           `EMPTY tools/list, and in-Strapi chat will have no tools. Grant them under each ` +
           `plugin's section in Settings > Roles (for chat) or Settings > Admin Tokens ` +
@@ -125,7 +125,7 @@ async function warnIfNothingGranted(strapi: Core.Strapi, actionIds: string[]): P
   } catch (error) {
     // A failed advisory check must never affect boot.
     strapi.log.debug(
-      `[ai-sdk:mcp] Could not check whether tool permissions are granted: ${
+      `[ai-chat:mcp] Could not check whether tool permissions are granted: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -138,7 +138,7 @@ export async function registerMcpAdminPermissions(
 ): Promise<void> {
   const defs = buildMcpActionDefs(registry);
   await strapi.service('admin::permission').actionProvider.registerMany(defs);
-  strapi.log.info(`[ai-sdk:mcp] Registered ${defs.length} custom admin permission(s).`);
+  strapi.log.info(`[ai-chat:mcp] Registered ${defs.length} custom admin permission(s).`);
 
   await warnIfNothingGranted(
     strapi,

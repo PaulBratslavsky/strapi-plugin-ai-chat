@@ -89,7 +89,7 @@ function discoverPluginTools(strapi: Core.Strapi, registry: ToolRegistry) {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const ownVersion = require('../../package.json').version as string;
         const declared = (pluginInstance as any)?.package?.peerDependencies?.[
-          'strapi-plugin-ai-sdk'
+          'strapi-plugin-ai-chat'
         ];
         checkPluginCompat(strapi, pluginName, declared, ownVersion);
       } catch {

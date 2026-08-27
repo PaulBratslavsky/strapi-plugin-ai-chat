@@ -131,12 +131,12 @@ describe('builtInTools inventory', () => {
       .sort();
     expect(defs.map((d) => d.uid).sort()).toEqual(expectedPublicUids);
 
-    // Every generated action lands under the ai-sdk plugin section (all of
+    // Every generated action lands under the ai-chat plugin section (all of
     // these are built-in — no `__` namespace prefix — so pluginName is
-    // always 'ai-sdk'), and every uid is free of underscores.
+    // always 'ai-chat'), and every uid is free of underscores.
     for (const def of defs) {
-      expect(`plugin::${def.pluginName}.${def.uid}`).toMatch(/^plugin::ai-sdk\.tool\./);
-      expect(def.pluginName).toBe('ai-sdk');
+      expect(`plugin::${def.pluginName}.${def.uid}`).toMatch(/^plugin::ai-chat\.tool\./);
+      expect(def.pluginName).toBe('ai-chat');
       expect(def.subCategory).toBe('AI tools');
       expect(def.uid).not.toMatch(/_/);
     }

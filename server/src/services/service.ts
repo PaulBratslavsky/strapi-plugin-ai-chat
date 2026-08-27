@@ -127,7 +127,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
             system += `\n\nUser memories (facts you have saved about this user from previous conversations — use these to personalize your responses):\n${lines.join('\n')}`;
           }
         } catch (err) {
-          strapi.log.warn('[ai-sdk] Failed to load user memories:', err);
+          strapi.log.warn('[ai-chat] Failed to load user memories:', err);
         }
       }
 

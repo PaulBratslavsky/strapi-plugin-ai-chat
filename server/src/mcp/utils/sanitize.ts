@@ -20,7 +20,7 @@ export async function sanitizeOutput(
   try {
     return await strapi.contentAPI.sanitize.output(data, contentType, { auth });
   } catch (error) {
-    strapi.log.error('[ai-sdk:mcp] Output sanitization failed', {
+    strapi.log.error('[ai-chat:mcp] Output sanitization failed', {
       uid,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
@@ -48,7 +48,7 @@ export async function sanitizeInput(
   try {
     return await strapi.contentAPI.sanitize.input(data, contentType, { auth });
   } catch (error) {
-    strapi.log.error('[ai-sdk:mcp] Input sanitization failed', {
+    strapi.log.error('[ai-chat:mcp] Input sanitization failed', {
       uid,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,

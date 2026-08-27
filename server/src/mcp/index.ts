@@ -26,7 +26,7 @@ export async function registerAiSdkMcpTools(
     // not set `mcp: { enabled: true }` in config/server.ts.
     if (!mcp?.isEnabled()) {
       strapi.log.info(
-        '[ai-sdk:mcp] Official MCP server not enabled — skipping tool registration. ' +
+        '[ai-chat:mcp] Official MCP server not enabled — skipping tool registration. ' +
           'Requires Strapi >= 5.47 and `mcp: { enabled: true }` in config/server.ts.',
       );
       return;
@@ -36,9 +36,9 @@ export async function registerAiSdkMcpTools(
     const count = registerToolsOnMcp(strapi, registry);
     registerResourcesOnMcp(strapi, registry);
 
-    strapi.log.info(`[ai-sdk:mcp] Registered ${count} tool(s) on the official MCP server.`);
+    strapi.log.info(`[ai-chat:mcp] Registered ${count} tool(s) on the official MCP server.`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    strapi.log.error(`[ai-sdk:mcp] Failed to register MCP capabilities: ${message}`);
+    strapi.log.error(`[ai-chat:mcp] Failed to register MCP capabilities: ${message}`);
   }
 }

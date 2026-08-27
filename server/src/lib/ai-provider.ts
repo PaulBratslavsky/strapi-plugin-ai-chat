@@ -56,7 +56,7 @@ function resolveApiKey(cfg: Partial<PluginConfig> | undefined, log?: { warn: (ms
     if (!deprecationWarned) {
       deprecationWarned = true;
       log?.warn(
-        '[ai-sdk] Config field "anthropicApiKey" is deprecated, use "apiKey" instead. ' +
+        '[ai-chat] Config field "anthropicApiKey" is deprecated, use "apiKey" instead. ' +
         '"anthropicApiKey" will continue to work as a fallback.'
       );
     }
@@ -111,7 +111,7 @@ export class AIProvider {
     if (providerName === 'openai-compatible') {
       if (!baseURL) {
         log?.warn(
-          '[ai-sdk] provider "openai-compatible" needs a baseURL, e.g. ' +
+          '[ai-chat] provider "openai-compatible" needs a baseURL, e.g. ' +
             '"http://localhost:11434/v1" for Ollama. AI features are disabled.',
         );
         return false;

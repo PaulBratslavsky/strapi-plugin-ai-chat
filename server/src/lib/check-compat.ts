@@ -52,7 +52,7 @@ export function checkPluginCompat(
   if (satisfies(ownVersion, declaredRange)) return true;
 
   strapi.log.warn(
-    `[ai-sdk] Plugin "${pluginName}" requires strapi-plugin-ai-sdk ${declaredRange} ` +
+    `[ai-chat] Plugin "${pluginName}" requires strapi-plugin-ai-sdk ${declaredRange} ` +
       `but ${ownVersion} is installed. Its tools may not register correctly — ` +
       `upgrade one of the two packages.`,
   );

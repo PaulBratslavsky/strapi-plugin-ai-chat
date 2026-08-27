@@ -53,11 +53,11 @@ const conversationController = ({ strapi }: { strapi: Core.Strapi }) => ({
 
     if (error) {
       strapi.log.warn(
-        `[ai-sdk] conversation ${id} has unreadable messages (${error}); returning it empty ` +
+        `[ai-chat] conversation ${id} has unreadable messages (${error}); returning it empty ` +
           'rather than failing the request. The stored value is left untouched.',
       );
     } else if (migrated) {
-      strapi.log.debug(`[ai-sdk] conversation ${id} read from the legacy message format`);
+      strapi.log.debug(`[ai-chat] conversation ${id} read from the legacy message format`);
     }
 
     ctx.body = { data: { ...conversation, messages } };
