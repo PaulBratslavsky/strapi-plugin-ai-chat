@@ -4,31 +4,31 @@ export default {
     {
       method: 'GET',
       path: '/model-health',
-      handler: 'controller.getModelHealth',
+      handler: 'model.health',
       config: { policies: [] },
     },
     {
       method: 'GET',
       path: '/context-info',
-      handler: 'controller.getContextInfo',
+      handler: 'model.context',
       config: { policies: [] },
     },
     {
       method: 'GET',
       path: '/model-info',
-      handler: 'controller.getModelInfo',
+      handler: 'model.info',
       config: { policies: [] },
     },
     {
       method: 'GET',
       path: '/tool-sources',
-      handler: 'controller.getToolSources',
+      handler: 'model.toolSources',
       config: { policies: [] },
     },
     {
       method: 'POST',
       path: '/chat',
-      handler: 'controller.chat',
+      handler: 'chat.chat',
       config: {
         policies: [],
         middlewares: ['plugin::ai-chat.guardrail'],

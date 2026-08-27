@@ -28,14 +28,6 @@ export const CHAT_MODELS = [
 export type ChatModelName = (typeof CHAT_MODELS)[number];
 
 export const DEFAULT_MODEL: ChatModelName = 'claude-sonnet-5';
-/**
- * Not applied by default. Newer Anthropic models reject `temperature`
- * ("`temperature` is deprecated for this model"), so the provider only sends it
- * when a caller sets it explicitly. Kept for callers that opt in on a model
- * known to accept it.
- */
-export const DEFAULT_TEMPERATURE = 0.7;
-
 export const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 export const DEFAULT_MAX_CONVERSATION_MESSAGES = 15;
 export const DEFAULT_MAX_STEPS = 10;

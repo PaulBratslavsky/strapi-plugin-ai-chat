@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { ToolRegistry } from '../../server/src/lib/tool-registry';
 import { actionForTool } from '../../server/src/mcp/permissions';
-import controllerFactory from '../../server/src/controllers/controller';
+import modelService from '../../server/src/services/model';
 
 const builtIn = {
   name: 'searchContent',
@@ -24,10 +24,12 @@ function setup(ability?: { can: (a: string) => boolean }) {
   registry.register(builtIn);
   registry.register(pluginTool);
 
-  const strapi = { plugin: () => ({ toolRegistry: registry }) } as any;
-  const ctx: any = { state: ability ? { userAbility: ability } : {}, badRequest: () => {} };
+  const strapi = {
+    plugin: () => ({ toolRegistry: registry }),
+    config: { get: () => ({}) },
+  } as any;
 
-  return { controller: controllerFactory({ strapi }), ctx };
+  return { model: modelService({ strapi }), ability };
 }
 
 const allowing = (...actions: string[]) => ({
@@ -36,36 +38,36 @@ const allowing = (...actions: string[]) => ({
 
 describe('getToolSources permission filtering', () => {
   it('hides sources the caller cannot use', async () => {
-    const { controller, ctx } = setup(allowing(actionForTool('searchContent')));
+    const { model, ability } = setup(allowing(actionForTool('searchContent')));
 
-    await controller.getToolSources(ctx);
+    const sources = model.toolSources(ability);
 
-    const ids = ctx.body.data.map((s: any) => s.id);
+    const ids = sources.map((s: any) => s.id);
     expect(ids).toEqual(['built-in']);
   });
 
   it('keeps a plugin source when any of its tools is granted', async () => {
-    const { controller, ctx } = setup(allowing(actionForTool(pluginTool.name)));
+    const { model, ability } = setup(allowing(actionForTool(pluginTool.name)));
 
-    await controller.getToolSources(ctx);
+    const sources = model.toolSources(ability);
 
-    const ids = ctx.body.data.map((s: any) => s.id);
+    const ids = sources.map((s: any) => s.id);
     expect(ids).toEqual(['ai_sdk_yt_transcripts']);
   });
 
   it('returns nothing when the caller is granted nothing', async () => {
-    const { controller, ctx } = setup(allowing());
+    const { model, ability } = setup(allowing());
 
-    await controller.getToolSources(ctx);
+    const sources = model.toolSources(ability);
 
-    expect(ctx.body.data).toEqual([]);
+    expect(sources).toEqual([]);
   });
 
   it('does not filter when no ability is present', async () => {
-    const { controller, ctx } = setup();
+    const { model, ability } = setup();
 
-    await controller.getToolSources(ctx);
+    const sources = model.toolSources(ability);
 
-    expect(ctx.body.data).toHaveLength(2);
+    expect(sources).toHaveLength(2);
   });
 });

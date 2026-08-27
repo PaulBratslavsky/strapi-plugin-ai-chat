@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { composeSystemPrompt } from '../../server/src/services/service';
+import { composeSystemPrompt } from '../../server/src/services/chat';
 
 const TOOLS = 'Available tools:\n- createContent: Create a document';
 

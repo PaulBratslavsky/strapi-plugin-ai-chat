@@ -1,116 +1,60 @@
 import type { Core } from '@strapi/strapi';
 import type { Context } from 'koa';
+import { requireAdminUserId } from '../lib/require-admin-user';
+import { handle } from '../lib/respond';
 
-const CONTENT_TYPE = 'plugin::ai-chat.memory' as const;
+const NOT_FOUND = 'Memory not found';
 
-function getAdminUserId(ctx: Context): number | null {
-  const id = ctx.state?.user?.id;
-  return typeof id === 'number' ? id : null;
-}
+const memoryController = ({ strapi }: { strapi: Core.Strapi }) => {
+  const memories = () => strapi.plugin('ai-chat').service('memory');
 
-const memoryController = ({ strapi }: { strapi: Core.Strapi }) => ({
-  async find(ctx: Context) {
-    const adminUserId = getAdminUserId(ctx);
-    if (!adminUserId) {
-      ctx.status = 401;
-      ctx.body = { error: 'Unauthorized' };
-      return;
-    }
+  return {
+    async find(ctx: Context) {
+      const adminUserId = requireAdminUserId(ctx);
+      if (adminUserId === null) return;
 
-    const memories = await strapi.documents(CONTENT_TYPE).findMany({
-      filters: { adminUserId },
-      fields: ['content', 'category', 'createdAt'],
-      sort: { createdAt: 'desc' },
-    });
+      ctx.body = { data: await memories().list(adminUserId) };
+    },
 
-    ctx.body = { data: memories };
-  },
+    async create(ctx: Context) {
+      const adminUserId = requireAdminUserId(ctx);
+      if (adminUserId === null) return;
 
-  async create(ctx: Context) {
-    const adminUserId = getAdminUserId(ctx);
-    if (!adminUserId) {
-      ctx.status = 401;
-      ctx.body = { error: 'Unauthorized' };
-      return;
-    }
+      const body = ctx.request.body as { content?: string };
+      if (!body?.content || typeof body.content !== 'string') {
+        ctx.status = 400;
+        ctx.body = { error: 'content is required' };
+        return;
+      }
 
-    const { content, category } = ctx.request.body as { content?: string; category?: string };
+      ctx.status = 201;
+      ctx.body = { data: await memories().create(adminUserId, body) };
+    },
 
-    if (!content || typeof content !== 'string') {
-      ctx.status = 400;
-      ctx.body = { error: 'content is required' };
-      return;
-    }
+    async update(ctx: Context) {
+      const adminUserId = requireAdminUserId(ctx);
+      if (adminUserId === null) return;
 
-    const memory = await strapi.documents(CONTENT_TYPE).create({
-      data: {
-        content,
-        category: category || 'general',
-        adminUserId,
-      },
-    });
+      const result = await handle(
+        ctx,
+        () => memories().update(adminUserId, ctx.params.id, ctx.request.body as any),
+        NOT_FOUND,
+      );
+      if (result.ok) ctx.body = { data: result.value };
+    },
 
-    ctx.status = 201;
-    ctx.body = { data: memory };
-  },
+    async delete(ctx: Context) {
+      const adminUserId = requireAdminUserId(ctx);
+      if (adminUserId === null) return;
 
-  async update(ctx: Context) {
-    const adminUserId = getAdminUserId(ctx);
-    if (!adminUserId) {
-      ctx.status = 401;
-      ctx.body = { error: 'Unauthorized' };
-      return;
-    }
-
-    const { id } = ctx.params;
-    const existing = await strapi.documents(CONTENT_TYPE).findOne({
-      documentId: id,
-    });
-
-    if (!existing || existing.adminUserId !== adminUserId) {
-      ctx.status = 404;
-      ctx.body = { error: 'Memory not found' };
-      return;
-    }
-
-    const { content, category } = ctx.request.body as { content?: string; category?: string };
-
-    const data: Record<string, unknown> = {};
-    if (content !== undefined) data.content = content;
-    if (category !== undefined) data.category = category;
-
-    const memory = await strapi.documents(CONTENT_TYPE).update({
-      documentId: id,
-      data: data as any,
-    });
-
-    ctx.body = { data: memory };
-  },
-
-  async delete(ctx: Context) {
-    const adminUserId = getAdminUserId(ctx);
-    if (!adminUserId) {
-      ctx.status = 401;
-      ctx.body = { error: 'Unauthorized' };
-      return;
-    }
-
-    const { id } = ctx.params;
-    const existing = await strapi.documents(CONTENT_TYPE).findOne({
-      documentId: id,
-    });
-
-    if (!existing || existing.adminUserId !== adminUserId) {
-      ctx.status = 404;
-      ctx.body = { error: 'Memory not found' };
-      return;
-    }
-
-    await strapi.documents(CONTENT_TYPE).delete({ documentId: id });
-
-    ctx.status = 200;
-    ctx.body = { data: { documentId: id } };
-  },
-});
+      const result = await handle(
+        ctx,
+        () => memories().remove(adminUserId, ctx.params.id),
+        NOT_FOUND,
+      );
+      if (result.ok) ctx.body = { data: result.value };
+    },
+  };
+};
 
 export default memoryController;

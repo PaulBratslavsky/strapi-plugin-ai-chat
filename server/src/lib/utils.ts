@@ -6,7 +6,7 @@ import type { UIMessage } from 'ai';
  * Get the AI SDK service with initialization check
  */
 export function getService(strapi: Core.Strapi, ctx: Context) {
-  const service = strapi.plugin('ai-chat').service('service');
+  const service = strapi.plugin('ai-chat').service('chat');
 
   if (!service.isInitialized()) {
     ctx.badRequest('AI SDK not initialized. Check plugin configuration.');
