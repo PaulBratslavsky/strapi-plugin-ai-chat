@@ -98,10 +98,10 @@
   "author": "Paul Bratslavsky <paul.bratslavsky@strapi.io>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/PaulBratslavsky/strapi-plugin-ai-sdk.git"
+    "url": "https://github.com/PaulBratslavsky/strapi-plugin-ai-chat.git"
   },
-  "homepage": "https://github.com/PaulBratslavsky/strapi-plugin-ai-sdk#readme",
+  "homepage": "https://github.com/PaulBratslavsky/strapi-plugin-ai-chat#readme",
   "bugs": {
-    "url": "https://github.com/PaulBratslavsky/strapi-plugin-ai-sdk/issues"
+    "url": "https://github.com/PaulBratslavsky/strapi-plugin-ai-chat/issues"
   }
 }
