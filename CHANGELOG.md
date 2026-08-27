@@ -3,6 +3,32 @@
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
 
+## 2.8.0 - 2026-08-27
+
+Renamed on npm to `strapi-plugin-ai-chat`. The plugin id is unchanged, so
+nothing in an existing install moves.
+
+`ai-sdk` named the dependency rather than what the plugin does. Someone
+searching for AI chat or MCP in Strapi would not find it, and the name implied
+a wrapper around Vercel's SDK rather than an admin chat surface with a tool
+registry other plugins extend.
+
+The id stays `ai-sdk` deliberately. It names five database tables
+(`ai_sdk_conversations`, `ai_sdk_memories`, `ai_sdk_notes`,
+`ai_sdk_public_memories`, `ai_sdk_tasks`), the `/ai-sdk/*` admin routes, every
+`plugin::ai-sdk.tool.*` permission, and the sibling transcripts plugin's own id
+and tool prefix. Changing it would be a data migration plus a re-grant across
+two plugins, which is not worth a better name. `strapi.name` in package.json
+pins it independently of what npm calls the package.
+
+**Upgrading:** change the dependency name, keep everything else. The config key
+in `config/plugins.ts` is still `'ai-sdk'`.
+
+```diff
+-"strapi-plugin-ai-sdk": "^2.7.0"
++"strapi-plugin-ai-chat": "^2.8.0"
+```
+
 ## 2.7.0 - 2026-08-26
 
 Stops a hung tool from taking the whole turn with it, and repairs a guard that

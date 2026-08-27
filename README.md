@@ -1,6 +1,15 @@
-# Strapi Plugin AI SDK
+# AI Chat for Strapi
 
-An AI chat assistant inside the Strapi v5 admin panel, plus an MCP tool server that exposes the same tools to external AI clients.
+AI chat inside the Strapi v5 admin, with a tool system your own plugins extend,
+and an MCP server that hands the same tools to external clients.
+
+The chat is the surface people see. Underneath it is a tool registry: this
+plugin ships content tools out of the box, any other plugin can contribute its
+own through a small service contract, and everything registered is exposed to
+external AI clients through Strapi's built-in MCP server. One definition, three
+consumers.
+
+Bring your own model. Anthropic, or anything OpenAI-compatible you run yourself.
 
 ---
 
@@ -39,7 +48,7 @@ Built on the [Vercel AI SDK](https://ai-sdk.dev/).
 **npm**
 
 ```bash
-npm install strapi-plugin-ai-sdk
+npm install strapi-plugin-ai-chat
 ```
 
 Requires Strapi 5.47 or later, which is where the built-in MCP server appears.
@@ -58,6 +67,11 @@ export default ({ env }) => ({
   },
 });
 ```
+
+> The config key is `'ai-sdk'`, not the package name. The plugin's id is pinned
+> separately from what it is called on npm, because that id names its database
+> tables, its admin routes, and every per-tool permission. Renaming the package
+> deliberately left it alone.
 
 ### 2. Enable Strapi's MCP server
 
