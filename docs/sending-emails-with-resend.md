@@ -2,7 +2,7 @@
 
 The `sendEmail` tool lets the model send mail through whatever email provider
 Strapi is already configured with. This guide uses [Resend](https://resend.com/),
-but nothing in the tool is Resend-specific. Current as of **2.6.0**.
+but nothing in the tool is Resend-specific. Current as of **3.0.0**.
 
 ## Contents
 

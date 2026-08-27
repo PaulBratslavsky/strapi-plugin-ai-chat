@@ -403,7 +403,6 @@ npm run test:ts:front
 - [Guardrails](./docs/guardrails.md): screening, patterns, and what is not covered
 - [Sending email](./docs/sending-emails-with-resend.md): the `sendEmail` tool and provider setup
 
-Superseded documents are kept unchanged under [`docs/old/`](./docs/old/).
 
 ---
 

@@ -1,7 +1,7 @@
 # Architecture
 
 How the plugin is put together, and why the parts that look odd are shaped the
-way they are. Current as of **2.6.0**.
+way they are. Current as of **3.0.0**.
 
 For installation and configuration, see the [README](../README.md). For writing
 a plugin that contributes tools, see [plugin-contract.md](./plugin-contract.md).
@@ -288,7 +288,7 @@ plugin::<owning-plugin>.tool.<action-slug>
 `<owning-plugin>` is the plugin that contributed the tool, not always `ai-sdk`.
 A tool from `ai-sdk-yt-transcripts` registers as
 `plugin::ai-sdk-yt-transcripts.tool.fetch-transcript`, appearing in that
-plugin's own section of the permissions grid. This keeps the ai-sdk section
+plugin's own section of the permissions grid. This keeps the ai-chat section
 listing only what it owns.
 
 `<action-slug>` is the MCP name with its source prefix stripped and underscores
@@ -326,7 +326,8 @@ the boot logs still read as success.
 
 That is exactly the state an upgrade lands in, because Strapi prunes permission
 rows whose action id no longer exists, and the pre-1.2.0 scheme used four tier
-actions (`plugin::ai-chat.mcp.read` and friends) that are gone.
+actions (`plugin::ai-sdk.mcp.read` and friends, under the plugin id of
+the time) that are gone.
 `warnIfNothingGranted()` counts rows in `admin::permission` matching any
 registered action and logs a warning naming the fix. It is advisory and never
 throws.
@@ -795,11 +796,34 @@ and `tools/` (RBAC filtering, tool-source filtering, failure formatting).
 
 ---
 
+## The plugin id, and why it moved
+
+The id is `ai-chat`. It is not cosmetic: it names the five database tables
+(`ai_chat_conversations`, `ai_chat_memories`, `ai_chat_notes`,
+`ai_chat_public_memories`, `ai_chat_tasks`), the `/ai-chat/*` admin routes,
+every `plugin::ai-chat.*` permission action, and the content type UIDs.
+
+It was `ai-sdk` until 3.0.0. That named the dependency rather than the plugin,
+and because the id reaches all of the above, renaming only the npm package would
+have left every user-facing identifier unchanged.
+
+`server/src/lib/migrate-from-ai-sdk.ts` carries an existing install across. It
+runs in `register()`, which is the only workable point: Strapi syncs the schema
+between `register` and `bootstrap`, so a migration running later would find five
+empty `ai_chat_*` tables already created and the old ones orphaned beside them,
+with no error raised. It renames the tables in place and rewrites every
+`plugin::ai-sdk.*` grant, is idempotent, and logs rather than throws on failure.
+
+The one thing it cannot do is edit the host's `config/plugins.ts`, so changing
+the config key from `'ai-sdk'` to `'ai-chat'` stays a manual upgrade step.
+
+`strapi.name` in `package.json` pins the id independently of the npm package
+name, which is what made the 2.8.0 package rename free and this one a migration.
+
 ## What used to be here
 
-If you are reading an older copy of this document — anything under
-[`docs/old/`](./old/) — these subsystems are described there and no longer
-exist:
+These subsystems appear in older copies of this document and no longer exist.
+Git history has them if you need the detail:
 
 | Removed | Where it went |
 |---|---|
