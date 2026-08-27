@@ -151,7 +151,7 @@ export class AIProvider {
       throw new Error(
         `AI provider "${this.providerName}" not registered. ` +
         `Registered: ${[...AIProvider.providerRegistry.keys()].join(', ') || 'none'}. ` +
-        `Register it via strapi.plugin('ai-sdk').service('provider').register('${this.providerName}', creator) ` +
+        `Register it via strapi.plugin('ai-chat').service('provider').register('${this.providerName}', creator) ` +
         `in your app's src/index.ts register() (or bootstrap()), or use a built-in provider name ` +
         `('anthropic' or 'openai-compatible').`
       );

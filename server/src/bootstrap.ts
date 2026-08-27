@@ -8,7 +8,7 @@ import { builtInTools } from './tools/definitions';
 import { checkPluginCompat } from './lib/check-compat';
 import type { PluginConfig, PluginInstance } from './lib/types';
 
-const PLUGIN_ID = 'ai-sdk';
+const PLUGIN_ID = 'ai-chat';
 
 const bootstrap = async ({ strapi }: { strapi: Core.Strapi }) => {
   const plugin = strapi.plugin(PLUGIN_ID) as unknown as PluginInstance;

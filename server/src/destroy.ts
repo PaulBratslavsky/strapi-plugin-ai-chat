@@ -1,7 +1,7 @@
 import type { Core } from '@strapi/strapi';
 import type { PluginInstance } from './lib/types';
 
-const PLUGIN_ID = 'ai-sdk';
+const PLUGIN_ID = 'ai-chat';
 
 const destroy = async ({ strapi }: { strapi: Core.Strapi }) => {
   try {

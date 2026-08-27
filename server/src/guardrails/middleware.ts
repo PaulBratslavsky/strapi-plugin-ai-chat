@@ -31,7 +31,7 @@ const guardrail = (
   _config: unknown,
   { strapi }: { strapi: Core.Strapi }
 ) => {
-  const pluginConfig = strapi.config.get('plugin::ai-sdk') as Record<string, unknown> | undefined;
+  const pluginConfig = strapi.config.get('plugin::ai-chat') as Record<string, unknown> | undefined;
   const guardrailConfig = pluginConfig?.guardrails as GuardrailConfig | undefined;
   const patterns = loadPatterns(guardrailConfig);
 

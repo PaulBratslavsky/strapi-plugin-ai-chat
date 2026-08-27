@@ -2,7 +2,7 @@
  * MCP tool risk tiers — metadata only.
  *
  * Permission gating no longer runs through these tiers: every MCP-exposed
- * tool is now gated by its own admin action (`plugin::ai-sdk.tool.<name>`,
+ * tool is now gated by its own admin action (`plugin::ai-chat.tool.<name>`,
  * see `./permissions.ts` and `actionForTool` in there), so an admin token
  * can be scoped to exactly the tools it needs.
  *

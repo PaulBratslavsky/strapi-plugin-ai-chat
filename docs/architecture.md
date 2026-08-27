@@ -36,7 +36,7 @@ Two things sharing one tool registry:
 
 | Surface | Transport | Caller authenticates as | Tool set |
 |---|---|---|---|
-| Admin chat | `POST /ai-sdk/chat`, SSE | Logged-in admin | What that admin's **role** grants |
+| Admin chat | `POST /ai-chat/chat`, SSE | Logged-in admin | What that admin's **role** grants |
 | MCP | Strapi's own `POST /mcp` | Admin API token | What that **token** grants |
 
 The plugin does not serve `/mcp`. Strapi 5.47 ships an official MCP server, and
@@ -50,7 +50,7 @@ it, gated by the same permission action, with the same failure handling.
 flowchart LR
   A[Admin chat panel]
   B[MCP client<br/>Claude Desktop, Cursor]
-  A -->|POST /ai-sdk/chat| E[service.chat] --> C[ToolRegistry]
+  A -->|POST /ai-chat/chat| E[service.chat] --> C[ToolRegistry]
   B -->|POST /mcp| F[Strapi official<br/>MCP server] --> C
   C --> D[tool-logic/] --> G[(Strapi documents API)]
 ```
@@ -159,7 +159,7 @@ app registers its own through the `provider` service:
 ```typescript
 // src/index.ts
 register({ strapi }) {
-  strapi.plugin('ai-sdk').service('provider').register('my-model', creator);
+  strapi.plugin('ai-chat').service('provider').register('my-model', creator);
 }
 ```
 
@@ -326,7 +326,7 @@ the boot logs still read as success.
 
 That is exactly the state an upgrade lands in, because Strapi prunes permission
 rows whose action id no longer exists, and the pre-1.2.0 scheme used four tier
-actions (`plugin::ai-sdk.mcp.read` and friends) that are gone.
+actions (`plugin::ai-chat.mcp.read` and friends) that are gone.
 `warnIfNothingGranted()` counts rows in `admin::permission` matching any
 registered action and logs a warning naming the fix. It is advisory and never
 throws.
@@ -379,7 +379,7 @@ sequenceDiagram
   participant S as service.chat
   participant M as Model
 
-  P->>G: POST /ai-sdk/chat (UIMessage[])
+  P->>G: POST /ai-chat/chat (UIMessage[])
   G->>G: extract last user text, normalize, match patterns
   alt blocked
     G-->>P: 200 SSE text-delta with the refusal
@@ -404,7 +404,7 @@ carrying orphaned tool calls, since the AI SDK throws `MissingToolResultsError`
 on a tool call whose result was sliced away.
 
 **Memories are injected per request.** For an authenticated admin, rows in
-`plugin::ai-sdk.memory` filtered to that `adminUserId` are appended to the
+`plugin::ai-chat.memory` filtered to that `adminUserId` are appended to the
 system prompt. A failure here warns and continues; it never fails the request.
 
 **Tool errors are rethrown, not returned.** `createTools()` wraps every
@@ -573,7 +573,7 @@ is `MAX_WIRE_BYTES = 950_000`.
 
 The official server does not let plugins set server-level `instructions`, so the
 usage guidance the retired custom server used to send lives in a resource at
-`strapi://ai-sdk/tools/guide`, gated by its own `plugin::ai-sdk.tool.guide`
+`strapi://ai-chat/tools/guide`, gated by its own `plugin::ai-chat.tool.guide`
 action. It is generated per read, so newly discovered plugin tools appear
 without a restart.
 
@@ -581,7 +581,7 @@ without a restart.
 
 ## Guardrails
 
-A Koa middleware registered as `plugin::ai-sdk.guardrail` and attached to
+A Koa middleware registered as `plugin::ai-chat.guardrail` and attached to
 `POST /chat` only. Full detail in [guardrails.md](./guardrails.md); the shape:
 
 1. `beforeProcess` hook, if configured — runs first and can block or sanitize.
@@ -606,11 +606,11 @@ Five content types, all scoped by `adminUserId` except `public-memory`:
 
 | Type | Collection | Holds |
 |---|---|---|
-| `conversation` | `ai_sdk_conversations` | `title`, `messages` (json), `adminUserId` |
-| `memory` | `ai_sdk_memories` | `content`, `category`, `adminUserId` |
-| `note` | `ai_sdk_notes` | `title`, `content`, `category`, `tags`, `source`, `adminUserId` |
-| `public-memory` | `ai_sdk_public_memories` | `content`, `category` |
-| `task` | `ai_sdk_tasks` | `title`, `description`, `content`, `done`, `priority`, `consequence`, `impact`, `dueDate`, `adminUserId` |
+| `conversation` | `ai_chat_conversations` | `title`, `messages` (json), `adminUserId` |
+| `memory` | `ai_chat_memories` | `content`, `category`, `adminUserId` |
+| `note` | `ai_chat_notes` | `title`, `content`, `category`, `tags`, `source`, `adminUserId` |
+| `public-memory` | `ai_chat_public_memories` | `content`, `category` |
+| `task` | `ai_chat_tasks` | `title`, `description`, `content`, `done`, `priority`, `consequence`, `impact`, `dueDate`, `adminUserId` |
 
 ### The conversation format has a contract
 
@@ -806,7 +806,7 @@ exist:
 | TTS provider registry, voice mode | Removed entirely |
 | Avatar 3D system, animation system | Removed entirely |
 | Anonymous public chat | `strapi-plugin-ai-sdk-public-chat`, with an explicit tool allow-list |
-| Custom `/api/ai-sdk/mcp` transport | Strapi's official `/mcp`, since 5.47 |
+| Custom `/api/ai-chat/mcp` transport | Strapi's official `/mcp`, since 5.47 |
 | Four-tier MCP permissions (`mcp.read` etc.) | One action per tool |
 | Hand-rolled SSE parsing in the panel | `@ai-sdk/react`'s `useChat` |
 

@@ -15,7 +15,7 @@ import {
 } from '../lib/context-budget';
 import { buildPreamble } from '../services/service';
 
-const PLUGIN_ID = 'ai-sdk';
+const PLUGIN_ID = 'ai-chat';
 
 const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
   /**
@@ -106,7 +106,7 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
    * to the edge.
    */
   async getContextInfo(ctx: Context) {
-    const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
+    const config = strapi.config.get<PluginConfig>('plugin::ai-chat');
 
     const { system, tools } = buildPreamble(strapi, {
       adminUserId: ctx.state?.user?.id,
@@ -140,7 +140,7 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   async getModelInfo(ctx: Context) {
-    const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
+    const config = strapi.config.get<PluginConfig>('plugin::ai-chat');
     const provider = config?.provider ?? 'anthropic';
     const model = config?.chatModel ?? DEFAULT_MODEL;
     const baseURL = config?.baseURL;
@@ -178,7 +178,7 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
    * than spending money to turn the badge green.
    */
   async getModelHealth(ctx: Context) {
-    const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
+    const config = strapi.config.get<PluginConfig>('plugin::ai-chat');
     const provider = config?.provider ?? 'anthropic';
     const baseURL = config?.baseURL;
     const model = config?.chatModel ?? DEFAULT_MODEL;
@@ -241,7 +241,7 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   async getToolSources(ctx: Context) {
-    const plugin = strapi.plugin('ai-sdk') as unknown as PluginInstance;
+    const plugin = strapi.plugin('ai-chat') as unknown as PluginInstance;
     const registry = plugin.toolRegistry;
 
     if (!registry) {

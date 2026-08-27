@@ -2,7 +2,7 @@ import type { Core } from '@strapi/strapi';
 import type { Context } from 'koa';
 import { readStoredMessages, toStoredMessages } from '../lib/stored-messages';
 
-const CONTENT_TYPE = 'plugin::ai-sdk.conversation' as const;
+const CONTENT_TYPE = 'plugin::ai-chat.conversation' as const;
 
 function getAdminUserId(ctx: Context): number | null {
   const id = ctx.state?.user?.id;

@@ -1,7 +1,7 @@
 import type { Core } from '@strapi/strapi';
 import type { Context } from 'koa';
 
-const CONTENT_TYPE = 'plugin::ai-sdk.public-memory' as const;
+const CONTENT_TYPE = 'plugin::ai-chat.public-memory' as const;
 
 const publicMemoryController = ({ strapi }: { strapi: Core.Strapi }) => ({
   async find(ctx: Context) {

@@ -73,7 +73,7 @@ export default ({ env }) => ({
     },
   },
 
-  'ai-sdk': {
+  'ai-chat': {
     enabled: true,
     config: {
       apiKey: env('ANTHROPIC_API_KEY'),
@@ -115,7 +115,7 @@ much easier to read outside a chat transcript.
 Like every other MCP-exposed tool, `sendEmail` starts ungranted:
 
 ```
-plugin::ai-sdk.tool.send-email
+plugin::ai-chat.tool.send-email
 ```
 
 - **Settings > Administration Panel > Roles** — for admin chat. Under the

@@ -254,7 +254,7 @@ export function TaskConfirmCard({ proposed }: Readonly<{ proposed: Proposed }>) 
         <SuccessTitle>Task created: {created.title}</SuccessTitle>
         <span>Score: {created.consequence} x {created.impact} = {s} &middot; Priority: {created.priority}</span>
         <div style={{ marginTop: 6 }}>
-          <TaskLink to={`/content-manager/collection-types/plugin::ai-sdk.task/${created.documentId}`}>
+          <TaskLink to={`/content-manager/collection-types/plugin::ai-chat.task/${created.documentId}`}>
             Open in Content Manager
           </TaskLink>
         </div>

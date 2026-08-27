@@ -16,12 +16,12 @@
 //
 // Each action is registered under `section: 'plugins'` with `pluginName` set
 // to the plugin that OWNS the tool — not always ai-sdk. Built-in tools use
-// `pluginName: 'ai-sdk'`; a tool contributed by another plugin (namespaced
+// `pluginName: 'ai-chat'`; a tool contributed by another plugin (namespaced
 // `<source>__<toolName>` during discovery, see bootstrap.ts) uses that
 // source as its `pluginName`, so its permission shows up in that plugin's
 // own section of the admin permissions screen — e.g.
 // `plugin::ai-sdk-yt-transcripts.tool.fetch-transcript`, not
-// `plugin::ai-sdk.tool.ai-sdk-yt-transcripts__fetch-transcript`. This keeps
+// `plugin::ai-chat.tool.ai-sdk-yt-transcripts__fetch-transcript`. This keeps
 // the ai-sdk section lean: it lists only the tools it actually owns.
 import type { Core } from '@strapi/strapi';
 import type { ToolRegistry } from '../lib/tool-registry';
@@ -58,7 +58,7 @@ const TOOL_GUIDE_ACTION_DEF: McpActionDef = {
   displayName: 'Read the tool guide',
 };
 
-export const TOOL_GUIDE_ACTION = 'plugin::ai-sdk.tool.guide';
+export const TOOL_GUIDE_ACTION = 'plugin::ai-chat.tool.guide';
 
 /**
  * Build one admin action definition per public tool in the registry, plus
@@ -90,7 +90,7 @@ export function buildMcpActionDefs(registry: ToolRegistry): McpActionDef[] {
  * successful but *empty* tool list — no error, and the registration logs above
  * still read as success. That is exactly the state an upgrade lands in, since
  * Strapi prunes permission rows whose action id no longer exists (the pre-1.2.0
- * `plugin::ai-sdk.mcp.*` tiers). Without this warning the only symptom is a
+ * `plugin::ai-chat.mcp.*` tiers). Without this warning the only symptom is a
  * client that mysteriously sees no tools.
  *
  * Advisory only — never throws, never blocks boot.
@@ -117,7 +117,7 @@ async function warnIfNothingGranted(strapi: Core.Strapi, actionIds: string[]): P
           `EMPTY tools/list, and in-Strapi chat will have no tools. Grant them under each ` +
           `plugin's section in Settings > Roles (for chat) or Settings > Admin Tokens ` +
           `(for MCP). ` +
-          `If you upgraded from a version using plugin::ai-sdk.mcp.read/.write/.destructive/` +
+          `If you upgraded from a version using plugin::ai-chat.mcp.read/.write/.destructive/` +
           `.maintenance, those actions no longer exist and their grants were pruned — the tools ` +
           `must be re-granted individually.`,
       );

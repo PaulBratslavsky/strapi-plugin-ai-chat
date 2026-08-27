@@ -2,7 +2,7 @@ import type { Core } from '@strapi/strapi';
 import { z } from 'zod';
 import type { ToolContext } from '../lib/tool-registry';
 
-const CONTENT_TYPE = 'plugin::ai-sdk.task' as const;
+const CONTENT_TYPE = 'plugin::ai-chat.task' as const;
 
 export const manageTaskSchema = z.object({
   action: z.enum(['create', 'update', 'complete', 'list', 'summary']).describe(

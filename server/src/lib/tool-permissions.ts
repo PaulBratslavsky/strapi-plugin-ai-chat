@@ -12,7 +12,7 @@
 // read like they were reaching into the wrong subsystem.
 import { toActionSlug, getToolSource } from '../mcp/naming';
 
-export const AI_SDK_PLUGIN_NAME = 'ai-sdk';
+export const AI_SDK_PLUGIN_NAME = 'ai-chat';
 
 /**
  * The plugin that OWNS a tool's permission. Built-ins belong to ai-sdk; a tool

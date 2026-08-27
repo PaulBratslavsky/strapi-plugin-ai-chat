@@ -24,9 +24,9 @@ cannot support.
 
 ## What is screened
 
-One route: `POST /ai-sdk/chat`.
+One route: `POST /ai-chat/chat`.
 
-The middleware is registered as `plugin::ai-sdk.guardrail` in
+The middleware is registered as `plugin::ai-chat.guardrail` in
 `server/src/middlewares/index.ts` and attached in `routes/admin/index.ts` to the
 chat route alone. No other endpoint carries it.
 
@@ -154,7 +154,7 @@ Set `disableDefaultPatterns: true` to drop all 29 and run only your own.
 ```typescript
 // config/plugins.ts
 export default ({ env }) => ({
-  'ai-sdk': {
+  'ai-chat': {
     enabled: true,
     config: {
       apiKey: env('ANTHROPIC_API_KEY'),

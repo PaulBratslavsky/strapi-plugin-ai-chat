@@ -65,7 +65,7 @@ async function withTimeout<T>(
 }
 
 export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet {
-  const plugin = strapi.plugin('ai-sdk') as unknown as PluginInstance;
+  const plugin = strapi.plugin('ai-chat') as unknown as PluginInstance;
   const registry = plugin.toolRegistry;
 
   if (!registry) {
@@ -79,7 +79,7 @@ export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet
   // Optional chaining because not every caller arrives with a full Strapi:
   // tests build a minimal one, and a missing config should fall back to the
   // default rather than take the whole tool set down.
-  const config = strapi.config?.get?.<PluginConfig>('plugin::ai-sdk');
+  const config = strapi.config?.get?.<PluginConfig>('plugin::ai-chat');
   const toolTimeoutMs = config?.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
 
   for (const [name, def] of registry.getAll()) {

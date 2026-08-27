@@ -81,7 +81,7 @@ export function buildPreamble(
   strapi: Core.Strapi,
   options?: { adminUserId?: number; enabledToolSources?: string[]; ability?: CallerAbility },
 ): { system: string; tools: ReturnType<typeof createTools> } {
-  const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
+  const config = strapi.config.get<PluginConfig>('plugin::ai-chat');
   const tools = createTools(strapi, {
     adminUserId: options?.adminUserId,
     enabledToolSources: options?.enabledToolSources,
@@ -92,7 +92,7 @@ export function buildPreamble(
 }
 
 const service = ({ strapi }: { strapi: Core.Strapi }) => {
-  const plugin = strapi.plugin('ai-sdk') as unknown as PluginInstance;
+  const plugin = strapi.plugin('ai-chat') as unknown as PluginInstance;
 
   return {
 
@@ -102,7 +102,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
      * Compatible with AI SDK UI hooks (useChat)
      */
     async chat(messages: UIMessage[], options?: { system?: string; adminUserId?: number; enabledToolSources?: string[]; ability?: CallerAbility; abortSignal?: AbortSignal }): Promise<StreamTextRawResult> {
-      const config = strapi.config.get<PluginConfig>('plugin::ai-sdk');
+      const config = strapi.config.get<PluginConfig>('plugin::ai-chat');
       const maxMessages = config?.maxConversationMessages ?? DEFAULT_MAX_CONVERSATION_MESSAGES;
       const maxOutputTokens = config?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
       const maxSteps = config?.maxSteps ?? DEFAULT_MAX_STEPS;
@@ -118,7 +118,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
       // Inject user memories into system prompt
       if (options?.adminUserId) {
         try {
-          const memories = await strapi.documents('plugin::ai-sdk.memory' as any).findMany({
+          const memories = await strapi.documents('plugin::ai-chat.memory' as any).findMany({
             filters: { adminUserId: options.adminUserId },
             fields: ['content', 'category'],
           });

@@ -2,7 +2,7 @@ import type { Core } from '@strapi/strapi';
 import { z } from 'zod';
 import type { ToolContext } from '../lib/tool-registry';
 
-const CONTENT_TYPE = 'plugin::ai-sdk.note' as const;
+const CONTENT_TYPE = 'plugin::ai-chat.note' as const;
 
 export const saveNoteSchema = z.object({
   title: z.string().optional().describe('A short title or label for the note'),

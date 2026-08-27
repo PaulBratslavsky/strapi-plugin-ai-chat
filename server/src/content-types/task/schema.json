@@ -1,29 +1,65 @@
 {
   "kind": "collectionType",
-  "collectionName": "ai_sdk_tasks",
+  "collectionName": "ai_chat_tasks",
   "info": {
     "singularName": "task",
     "pluralName": "tasks",
     "displayName": "AI Task"
   },
-  "options": { "draftAndPublish": false },
+  "options": {
+    "draftAndPublish": false
+  },
   "pluginOptions": {
-    "content-manager": { "visible": true },
-    "content-type-builder": { "visible": false }
+    "content-manager": {
+      "visible": true
+    },
+    "content-type-builder": {
+      "visible": false
+    }
   },
   "attributes": {
-    "title": { "type": "string", "required": true },
-    "description": { "type": "text" },
-    "content": { "type": "richtext" },
-    "done": { "type": "boolean", "default": false },
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "description": {
+      "type": "text"
+    },
+    "content": {
+      "type": "richtext"
+    },
+    "done": {
+      "type": "boolean",
+      "default": false
+    },
     "priority": {
       "type": "enumeration",
-      "enum": ["low", "medium", "high", "urgent"],
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ],
       "default": "medium"
     },
-    "consequence": { "type": "integer", "default": 3, "min": 1, "max": 5 },
-    "impact": { "type": "integer", "default": 3, "min": 1, "max": 5 },
-    "dueDate": { "type": "date" },
-    "adminUserId": { "type": "integer", "required": true }
+    "consequence": {
+      "type": "integer",
+      "default": 3,
+      "min": 1,
+      "max": 5
+    },
+    "impact": {
+      "type": "integer",
+      "default": 3,
+      "min": 1,
+      "max": 5
+    },
+    "dueDate": {
+      "type": "date"
+    },
+    "adminUserId": {
+      "type": "integer",
+      "required": true
+    }
   }
 }

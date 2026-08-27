@@ -2,7 +2,7 @@ import type { Core } from '@strapi/strapi';
 import { z } from 'zod';
 import type { ToolContext } from '../lib/tool-registry';
 
-const CONTENT_TYPE = 'plugin::ai-sdk.note' as const;
+const CONTENT_TYPE = 'plugin::ai-chat.note' as const;
 
 export const recallNotesSchema = z.object({
   query: z.string().optional().describe('Optional search term to filter notes by title or content'),

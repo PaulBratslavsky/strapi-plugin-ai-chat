@@ -1,22 +1,49 @@
 {
   "kind": "collectionType",
-  "collectionName": "ai_sdk_notes",
+  "collectionName": "ai_chat_notes",
   "info": {
     "singularName": "note",
     "pluralName": "notes",
     "displayName": "AI Note"
   },
-  "options": { "draftAndPublish": false },
+  "options": {
+    "draftAndPublish": false
+  },
   "pluginOptions": {
-    "content-manager": { "visible": false },
-    "content-type-builder": { "visible": false }
+    "content-manager": {
+      "visible": false
+    },
+    "content-type-builder": {
+      "visible": false
+    }
   },
   "attributes": {
-    "title": { "type": "string" },
-    "content": { "type": "richtext", "required": true },
-    "category": { "type": "enumeration", "enum": ["research", "snippet", "idea", "reference"], "default": "research" },
-    "tags": { "type": "text" },
-    "source": { "type": "string" },
-    "adminUserId": { "type": "integer", "required": true }
+    "title": {
+      "type": "string"
+    },
+    "content": {
+      "type": "richtext",
+      "required": true
+    },
+    "category": {
+      "type": "enumeration",
+      "enum": [
+        "research",
+        "snippet",
+        "idea",
+        "reference"
+      ],
+      "default": "research"
+    },
+    "tags": {
+      "type": "text"
+    },
+    "source": {
+      "type": "string"
+    },
+    "adminUserId": {
+      "type": "integer",
+      "required": true
+    }
   }
 }

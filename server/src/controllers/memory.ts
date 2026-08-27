@@ -1,7 +1,7 @@
 import type { Core } from '@strapi/strapi';
 import type { Context } from 'koa';
 
-const CONTENT_TYPE = 'plugin::ai-sdk.memory' as const;
+const CONTENT_TYPE = 'plugin::ai-chat.memory' as const;
 
 function getAdminUserId(ctx: Context): number | null {
   const id = ctx.state?.user?.id;

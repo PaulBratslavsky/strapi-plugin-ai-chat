@@ -34,7 +34,7 @@ There are exactly two surfaces:
 
 | Surface | Where | Authenticates with | Tools it can use |
 |---|---|---|---|
-| Admin chat | `/ai-sdk/*` in the admin panel | Logged-in admin session | What that admin's **role** grants |
+| Admin chat | `/ai-chat/*` in the admin panel | Logged-in admin session | What that admin's **role** grants |
 | MCP | Strapi's own `POST /mcp` | Admin API token | What that **token** grants |
 
 The plugin does not serve `/mcp` itself. It registers its tools onto Strapi's built-in MCP server at boot.
@@ -58,7 +58,7 @@ Requires Strapi 5.47 or later, which is where the built-in MCP server appears.
 ```typescript
 // config/plugins.ts
 export default ({ env }) => ({
-  'ai-sdk': {
+  'ai-chat': {
     enabled: true,
     config: {
       apiKey: env('ANTHROPIC_API_KEY'),
@@ -68,7 +68,7 @@ export default ({ env }) => ({
 });
 ```
 
-> The config key is `'ai-sdk'`, not the package name. The plugin's id is pinned
+> The config key is `'ai-chat'`, not the package name. The plugin's id is pinned
 > separately from what it is called on npm, because that id names its database
 > tables, its admin routes, and every per-tool permission. Renaming the package
 > deliberately left it alone.
@@ -259,7 +259,7 @@ import { createMistral } from '@ai-sdk/mistral';
 
 export default {
   register({ strapi }) {
-    strapi.plugin('ai-sdk').service('provider').register(
+    strapi.plugin('ai-chat').service('provider').register(
       'mistral',
       ({ apiKey, baseURL }) => {
         const provider = createMistral({ apiKey, baseURL });
@@ -287,7 +287,7 @@ The same actions gate two different callers:
 
 An ungranted tool is invisible rather than merely blocked. It never appears in `tools/list`, and the chat model is never offered it.
 
-> Upgrading from a version before 1.2.0? The old `plugin::ai-sdk.mcp.read/.write/.destructive/.maintenance` actions no longer exist, and Strapi prunes grants whose action id is gone. Tools must be re-granted individually, or every client sees an empty tool list with no error.
+> Upgrading from a version before 1.2.0? The old `plugin::ai-chat.mcp.read/.write/.destructive/.maintenance` actions no longer exist, and Strapi prunes grants whose action id is gone. Tools must be re-granted individually, or every client sees an empty tool list with no error.
 
 ---
 

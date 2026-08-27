@@ -122,7 +122,7 @@ might type.
 
 This is not injected into the system prompt. The official MCP server does not
 let plugins set server-level `instructions`, so source metadata surfaces in the
-tool guide resource at `strapi://ai-sdk/tools/guide` instead.
+tool guide resource at `strapi://ai-chat/tools/guide` instead.
 
 ---
 
@@ -293,7 +293,7 @@ deliberate:
 | Context | Form | Example |
 |---|---|---|
 | Registry | camelCase, `__`-prefixed | `ai-sdk-yt-transcripts__fetchTranscript` |
-| MCP tool name | snake_case | `ai_sdk_yt_transcripts__fetch_transcript` |
+| MCP tool name | snake_case | `ai_chat_yt_transcripts__fetch_transcript` |
 | Admin action | hyphens, prefix stripped | `plugin::ai-sdk-yt-transcripts.tool.fetch-transcript` |
 
 MCP names are snake_case to match Strapi's own built-in tools. Action slugs use
@@ -301,7 +301,7 @@ hyphens because Strapi's admin action uid validator accepts only lowercase
 letters, dots and hyphens — no underscores. The source prefix is stripped from
 the action because the plugin section already identifies the source; repeating
 it would give you
-`plugin::ai-sdk.tool.ai-sdk-yt-transcripts__fetch-transcript`.
+`plugin::ai-chat.tool.ai-sdk-yt-transcripts__fetch-transcript`.
 
 **Name collisions are skipped, not overwritten.** Two plugins can both expose a
 `search` tool without clashing, since the prefix disambiguates them. A duplicate

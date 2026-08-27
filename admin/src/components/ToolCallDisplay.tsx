@@ -71,7 +71,7 @@ function extractContentLinks(toolCall: ToolCall): ContentLink[] {
   return [];
 }
 
-const TASK_CONTENT_TYPE = 'plugin::ai-sdk.task';
+const TASK_CONTENT_TYPE = 'plugin::ai-chat.task';
 
 function extractTaskLinks(toolCall: ToolCall): ContentLink[] {
   if (toolCall.toolName !== 'manageTask' || toolCall.output == null) return [];

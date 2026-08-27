@@ -3,6 +3,44 @@
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
 
+## 3.0.0 - 2026-08-27
+
+**Breaking.** The plugin id changed from `ai-sdk` to `ai-chat`. A migration
+ships with the release and runs on first boot, so data and permission grants
+carry over on their own. One step is manual.
+
+**What you must do:** rename the key in `config/plugins.ts`.
+
+```diff
+-'ai-sdk': {
++'ai-chat': {
+   enabled: true,
+ }
+```
+
+**What the migration does for you, on first boot:**
+
+- Renames the five tables in place, preserving rows and ids:
+  `ai_sdk_conversations` to `ai_chat_conversations`, and the same for
+  `memories`, `notes`, `public_memories` and `tasks`.
+- Rewrites every `plugin::ai-sdk.*` permission grant to `plugin::ai-chat.*`,
+  so roles and admin tokens keep the tools they were given.
+
+It runs in `register()`, before Strapi syncs the schema, because that is the
+only point where the old tables can be renamed rather than left orphaned beside
+new empty ones. It is idempotent, so it is a no-op after the first boot and safe
+if a boot is interrupted part way. A failure is logged and leaves existing data
+untouched rather than taking the host down.
+
+**What also moves:** admin routes are now `/ai-chat/*` rather than `/ai-sdk/*`,
+and content type UIDs are `plugin::ai-chat.conversation` and friends. Anything
+calling those paths directly needs updating.
+
+**Why:** `ai-sdk` named the dependency rather than the plugin, and it appeared
+in the config key, the routes, the permissions and the table names. Renaming
+only the npm package would have left every user-facing identifier still saying
+`ai-sdk`, which is not a rename.
+
 ## 2.8.0 - 2026-08-27
 
 Renamed on npm to `strapi-plugin-ai-chat`. The plugin id is unchanged, so
