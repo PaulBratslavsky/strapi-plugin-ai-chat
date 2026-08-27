@@ -1,7 +1,7 @@
 import type { Core } from '@strapi/strapi';
 import type { Context } from 'koa';
 
-const CONTENT_TYPE = 'plugin::ai-sdk.note' as const;
+const CONTENT_TYPE = 'plugin::ai-chat.note' as const;
 
 function getAdminUserId(ctx: Context): number | null {
   const id = ctx.state?.user?.id;

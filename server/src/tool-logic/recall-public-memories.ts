@@ -1,7 +1,7 @@
 import type { Core } from '@strapi/strapi';
 import { z } from 'zod';
 
-const CONTENT_TYPE = 'plugin::ai-sdk.public-memory' as const;
+const CONTENT_TYPE = 'plugin::ai-chat.public-memory' as const;
 
 export const recallPublicMemoriesSchema = z.object({
   query: z.string().optional().describe('Optional search term to filter public memories by content'),

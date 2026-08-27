@@ -1,6 +1,6 @@
 {
   "kind": "collectionType",
-  "collectionName": "ai_sdk_public_memories",
+  "collectionName": "ai_chat_public_memories",
   "info": {
     "singularName": "public-memory",
     "pluralName": "public-memories",

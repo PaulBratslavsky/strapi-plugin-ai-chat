@@ -8,7 +8,7 @@ import { builtInTools } from './tools/definitions';
 import { checkPluginCompat } from './lib/check-compat';
 import type { PluginConfig, PluginInstance } from './lib/types';
 
-const PLUGIN_ID = 'ai-sdk';
+const PLUGIN_ID = 'ai-chat';
 
 const bootstrap = async ({ strapi }: { strapi: Core.Strapi }) => {
   const plugin = strapi.plugin(PLUGIN_ID) as unknown as PluginInstance;
@@ -89,7 +89,7 @@ function discoverPluginTools(strapi: Core.Strapi, registry: ToolRegistry) {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const ownVersion = require('../../package.json').version as string;
         const declared = (pluginInstance as any)?.package?.peerDependencies?.[
-          'strapi-plugin-ai-sdk'
+          'strapi-plugin-ai-chat'
         ];
         checkPluginCompat(strapi, pluginName, declared, ownVersion);
       } catch {

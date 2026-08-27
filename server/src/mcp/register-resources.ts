@@ -3,7 +3,7 @@ import type { ToolRegistry } from '../lib/tool-registry';
 import { generateToolGuide } from './resources/tool-guide';
 import { TOOL_GUIDE_ACTION } from './permissions';
 
-export const TOOL_GUIDE_URI = 'strapi://ai-sdk/tools/guide';
+export const TOOL_GUIDE_URI = 'strapi://ai-chat/tools/guide';
 
 /**
  * Register static MCP resources.
@@ -14,7 +14,7 @@ export const TOOL_GUIDE_URI = 'strapi://ai-sdk/tools/guide';
  */
 export function registerResourcesOnMcp(strapi: Core.Strapi, registry: ToolRegistry): void {
   strapi.ai!.mcp.registerResource({
-    name: 'ai-sdk-tool-guide',
+    name: 'ai-chat-tool-guide',
     uri: TOOL_GUIDE_URI,
     metadata: {
       description:

@@ -33,7 +33,7 @@ describe('registerResourcesOnMcp', () => {
     const { strapi, captured } = createFakeStrapi();
     registerResourcesOnMcp(strapi, buildRegistry());
     expect(captured.resources[0].auth).toEqual({
-      policies: [{ action: 'plugin::ai-sdk.tool.guide' }],
+      policies: [{ action: 'plugin::ai-chat.tool.guide' }],
     });
   });
 

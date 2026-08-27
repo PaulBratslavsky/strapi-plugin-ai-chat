@@ -62,13 +62,13 @@ describe('registerMcpAdminPermissions', () => {
     expect(captured.actions).toHaveLength(3);
   });
 
-  it('registers built-in tools and the guide under the ai-sdk plugin section', async () => {
+  it('registers built-in tools and the guide under the ai-chat plugin section', async () => {
     const { strapi, captured } = createFakeStrapi();
     await registerMcpAdminPermissions(strapi, registryWith(readTool, writeTool));
 
     for (const action of captured.actions) {
       expect(action.section).toBe('plugins');
-      expect(action.pluginName).toBe('ai-sdk');
+      expect(action.pluginName).toBe('ai-chat');
       expect(typeof action.displayName).toBe('string');
     }
   });
@@ -97,7 +97,7 @@ describe('registerMcpAdminPermissions', () => {
     const action = captured.actions.find((a: any) => a.uid === 'tool.fetch-transcript');
     expect(action).toBeDefined();
     expect(action.pluginName).toBe('ai-sdk-yt-transcripts');
-    expect(action.pluginName).not.toBe('ai-sdk');
+    expect(action.pluginName).not.toBe('ai-chat');
   });
 
   it('produces an unambiguous full action id combining plugin section and bare uid', async () => {
@@ -108,16 +108,16 @@ describe('registerMcpAdminPermissions', () => {
     expect(ids).toEqual(
       [
         'plugin::ai-sdk-yt-transcripts.tool.fetch-transcript',
-        'plugin::ai-sdk.tool.guide',
-        'plugin::ai-sdk.tool.search-content',
+        'plugin::ai-chat.tool.guide',
+        'plugin::ai-chat.tool.search-content',
       ].sort(),
     );
   });
 });
 
 describe('actionForTool', () => {
-  it('derives the full action id from a built-in registry name, owned by ai-sdk', () => {
-    expect(actionForTool('searchContent')).toBe('plugin::ai-sdk.tool.search-content');
+  it('derives the full action id from a built-in registry name, owned by ai-chat', () => {
+    expect(actionForTool('searchContent')).toBe('plugin::ai-chat.tool.search-content');
   });
 
   it('derives the full action id from a contributed registry name, owned by its source plugin', () => {
@@ -165,7 +165,7 @@ describe('ungranted-permission advisory', () => {
     expect(w).toHaveLength(1);
     expect(w[0]).toMatch(/EMPTY tools\/list/);
     // must point at the pruned tier actions, since that is the upgrade case
-    expect(w[0]).toMatch(/plugin::ai-sdk\.mcp\.read/);
+    expect(w[0]).toMatch(/plugin::ai-chat\.mcp\.read/);
   });
 
   it('stays quiet when at least one grant exists', async () => {

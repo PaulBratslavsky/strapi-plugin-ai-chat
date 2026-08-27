@@ -8,7 +8,7 @@ import { AIProvider } from '../lib/ai-provider';
  *   // src/index.ts
  *   export default {
  *     register({ strapi }) {
- *       strapi.plugin('ai-sdk').service('provider').register(
+ *       strapi.plugin('ai-chat').service('provider').register(
  *         'my-model',
  *         ({ apiKey, baseURL }) => {
  *           const client = createMyClient({ apiKey, baseURL });

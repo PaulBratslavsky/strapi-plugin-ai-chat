@@ -1,1 +1,1 @@
-export const PLUGIN_ID = 'ai-sdk';
+export const PLUGIN_ID = 'ai-chat';

@@ -60,7 +60,7 @@ export function registerToolsOnMcp(strapi: Core.Strapi, registry: ToolRegistry):
             };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            s.log.error(`[ai-sdk:mcp] Tool ${def.name} failed: ${message}`);
+            s.log.error(`[ai-chat:mcp] Tool ${def.name} failed: ${message}`);
             // Error is a separate branch of the union: isError present,
             // structuredContent absent. Never both.
             return {
@@ -74,7 +74,7 @@ export function registerToolsOnMcp(strapi: Core.Strapi, registry: ToolRegistry):
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       strapi.log.warn(
-        `[ai-sdk:mcp] Skipped tool "${name}" (mcp name "${mcpName}") — registration failed: ${message}`,
+        `[ai-chat:mcp] Skipped tool "${name}" (mcp name "${mcpName}") — registration failed: ${message}`,
       );
     }
   }

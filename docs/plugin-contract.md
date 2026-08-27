@@ -1,6 +1,6 @@
 # Plugin contract
 
-How another Strapi plugin contributes tools to `strapi-plugin-ai-sdk`, and what
+How another Strapi plugin contributes tools to `strapi-plugin-ai-chat`, and what
 it can rely on. Current as of **2.6.0**.
 
 This is the single reference for extension plugins. It replaces
@@ -77,7 +77,7 @@ tool that never touches `strapi.documents()` gains little from living here.
 
 ## The `ai-tools` service
 
-At boot, `strapi-plugin-ai-sdk` iterates every other installed plugin and looks
+At boot, `strapi-plugin-ai-chat` iterates every other installed plugin and looks
 for a service named exactly `ai-tools`:
 
 ```typescript
@@ -122,7 +122,7 @@ might type.
 
 This is not injected into the system prompt. The official MCP server does not
 let plugins set server-level `instructions`, so source metadata surfaces in the
-tool guide resource at `strapi://ai-sdk/tools/guide` instead.
+tool guide resource at `strapi://ai-chat/tools/guide` instead.
 
 ---
 
@@ -144,7 +144,7 @@ interface ToolDefinition {
 missing any of the first three is skipped with a warning. (`execute` is checked
 too — a definition without it never registers.)
 
-> **You cannot import this type.** `strapi-plugin-ai-sdk/strapi-server` resolves
+> **You cannot import this type.** `strapi-plugin-ai-chat/strapi-server` resolves
 > to a bundle whose only export is the Strapi plugin object itself
 > (`module.exports = index`). `ToolDefinition`, its alias
 > `AiToolContribution`, and the `jsonCoercible` helper all exist in this
@@ -293,7 +293,7 @@ deliberate:
 | Context | Form | Example |
 |---|---|---|
 | Registry | camelCase, `__`-prefixed | `ai-sdk-yt-transcripts__fetchTranscript` |
-| MCP tool name | snake_case | `ai_sdk_yt_transcripts__fetch_transcript` |
+| MCP tool name | snake_case | `ai_chat_yt_transcripts__fetch_transcript` |
 | Admin action | hyphens, prefix stripped | `plugin::ai-sdk-yt-transcripts.tool.fetch-transcript` |
 
 MCP names are snake_case to match Strapi's own built-in tools. Action slugs use
@@ -301,7 +301,7 @@ hyphens because Strapi's admin action uid validator accepts only lowercase
 letters, dots and hyphens — no underscores. The source prefix is stripped from
 the action because the plugin section already identifies the source; repeating
 it would give you
-`plugin::ai-sdk.tool.ai-sdk-yt-transcripts__fetch-transcript`.
+`plugin::ai-chat.tool.ai-sdk-yt-transcripts__fetch-transcript`.
 
 **Name collisions are skipped, not overwritten.** Two plugins can both expose a
 `search` tool without clashing, since the prefix disambiguates them. A duplicate
@@ -367,7 +367,7 @@ Declare a peer dependency:
 
 ```json
 "peerDependencies": {
-  "strapi-plugin-ai-sdk": "^2.0.0"
+  "strapi-plugin-ai-chat": "^2.0.0"
 }
 ```
 
@@ -375,7 +375,7 @@ At discovery, `checkPluginCompat()` compares that range against the running
 version and warns on a mismatch:
 
 ```
-[ai-sdk] Plugin "ai-sdk-yt-transcripts" requires strapi-plugin-ai-sdk ^1.1.0
+[ai-sdk] Plugin "ai-sdk-yt-transcripts" requires strapi-plugin-ai-chat ^1.1.0
 but 2.6.0 is installed. Its tools may not register correctly — upgrade one of
 the two packages.
 ```
@@ -447,7 +447,7 @@ export const fetchThingTool: ToolDefinition = {
 - [ ] Array/object parameters wrapped in a `jsonCoercible()` copy
 - [ ] Read-only tools marked `publicSafe: true` so they are not withdrawn after one call
 - [ ] Expensive tools marked `access: 'maintenance'`
-- [ ] `peerDependencies` declares a `strapi-plugin-ai-sdk` range
+- [ ] `peerDependencies` declares a `strapi-plugin-ai-chat` range
 - [ ] `zod@^4`
 - [ ] Tools tested directly, without booting Strapi
 
@@ -457,12 +457,21 @@ export const fetchThingTool: ToolDefinition = {
 
 | Thing | Convention | Example |
 |---|---|---|
-| Package name | `strapi-plugin-ai-sdk-<domain>` | `strapi-plugin-ai-sdk-yt-transcripts` |
-| Strapi plugin id | `ai-sdk-<domain>` | `ai-sdk-yt-transcripts` |
+| Package name | name it for what it does | `strapi-plugin-youtube-transcripts` |
+| Strapi plugin id | stable, and pinned | `ai-sdk-yt-transcripts` |
 | Tool name | camelCase verb-noun | `fetchTranscript` |
 
-The plugin id is what becomes the namespace prefix and the permission section,
-so it is the one that shows up in user-facing places.
+**Do not name your package after this plugin.** A contributing plugin does not
+depend on this one, so a name like `strapi-plugin-ai-sdk-<domain>` advertises a
+coupling that does not exist and tells anyone browsing npm that they must adopt
+an AI stack to use it. Name it for the capability; the AI tools are additive.
+
+**Pin your plugin id and then leave it alone.** Set `strapi.name` in
+`package.json` so the id is fixed independently of what npm calls the package.
+The id becomes the namespace prefix on every tool name, the permission section
+in Settings > Roles, the prefix on your database tables and your admin routes.
+Changing it later orphans every existing grant and every stored row, silently.
+Renaming the package is cheap precisely because the two are separate.
 
 ---
 

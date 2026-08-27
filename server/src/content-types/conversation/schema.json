@@ -1,19 +1,35 @@
 {
   "kind": "collectionType",
-  "collectionName": "ai_sdk_conversations",
+  "collectionName": "ai_chat_conversations",
   "info": {
     "singularName": "conversation",
     "pluralName": "conversations",
     "displayName": "AI Conversation"
   },
-  "options": { "draftAndPublish": false },
+  "options": {
+    "draftAndPublish": false
+  },
   "pluginOptions": {
-    "content-manager": { "visible": false },
-    "content-type-builder": { "visible": false }
+    "content-manager": {
+      "visible": false
+    },
+    "content-type-builder": {
+      "visible": false
+    }
   },
   "attributes": {
-    "title": { "type": "string", "required": true, "default": "New conversation" },
-    "messages": { "type": "json", "required": true },
-    "adminUserId": { "type": "integer", "required": true }
+    "title": {
+      "type": "string",
+      "required": true,
+      "default": "New conversation"
+    },
+    "messages": {
+      "type": "json",
+      "required": true
+    },
+    "adminUserId": {
+      "type": "integer",
+      "required": true
+    }
   }
 }

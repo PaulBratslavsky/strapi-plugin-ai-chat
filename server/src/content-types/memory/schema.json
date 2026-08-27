@@ -1,19 +1,40 @@
 {
   "kind": "collectionType",
-  "collectionName": "ai_sdk_memories",
+  "collectionName": "ai_chat_memories",
   "info": {
     "singularName": "memory",
     "pluralName": "memories",
     "displayName": "AI Memory"
   },
-  "options": { "draftAndPublish": false },
+  "options": {
+    "draftAndPublish": false
+  },
   "pluginOptions": {
-    "content-manager": { "visible": false },
-    "content-type-builder": { "visible": false }
+    "content-manager": {
+      "visible": false
+    },
+    "content-type-builder": {
+      "visible": false
+    }
   },
   "attributes": {
-    "content": { "type": "richtext", "required": true },
-    "category": { "type": "enumeration", "enum": ["general", "preference", "personal", "project"], "default": "general" },
-    "adminUserId": { "type": "integer", "required": true }
+    "content": {
+      "type": "richtext",
+      "required": true
+    },
+    "category": {
+      "type": "enumeration",
+      "enum": [
+        "general",
+        "preference",
+        "personal",
+        "project"
+      ],
+      "default": "general"
+    },
+    "adminUserId": {
+      "type": "integer",
+      "required": true
+    }
   }
 }
