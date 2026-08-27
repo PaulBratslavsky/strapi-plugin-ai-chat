@@ -1,13 +1,9 @@
 # Plugin contract
 
 How another Strapi plugin contributes tools to `strapi-plugin-ai-chat`, and what
-it can rely on. Current as of **2.6.0**.
+it can rely on. Current as of **3.0.0**.
 
-This is the single reference for extension plugins. It replaces
-`tool-standardization-spec.md`, `plugin-tool-discovery.md` and
-`mcp-consolidation.md`, which were pre-implementation proposals for work that
-has since shipped; they are kept unchanged under [`docs/old/`](./old/) for their
-historical rationale.
+This is the single reference for extension plugins.
 
 Audience: anyone writing an extension plugin, and anyone debugging why a tool
 did not show up in chat or in `tools/list`.
@@ -375,7 +371,7 @@ At discovery, `checkPluginCompat()` compares that range against the running
 version and warns on a mismatch:
 
 ```
-[ai-sdk] Plugin "ai-sdk-yt-transcripts" requires strapi-plugin-ai-chat ^1.1.0
+[ai-chat] Plugin "ai-sdk-yt-transcripts" requires strapi-plugin-ai-chat ^1.1.0
 but 2.6.0 is installed. Its tools may not register correctly — upgrade one of
 the two packages.
 ```

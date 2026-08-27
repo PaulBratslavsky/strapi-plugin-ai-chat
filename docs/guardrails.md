@@ -1,7 +1,7 @@
 # Guardrails
 
 Regex screening of chat input, before anything reaches the model. Current as of
-**2.6.0**.
+**3.0.0**.
 
 This is a speed bump, not a security boundary. It catches the obvious and
 declares plainly what it does not cover, so nobody builds on an assumption it
