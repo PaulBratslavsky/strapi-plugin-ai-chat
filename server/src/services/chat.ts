@@ -12,6 +12,7 @@ import { createTools, describeTools } from '../tools';
 import { closeToolsAfterWrite } from '../lib/close-tools-after-write';
 import type { CallerAbility } from '../lib/tool-registry';
 import { trimMessages } from '../lib/trim-messages';
+import { settleDanglingToolCalls } from '../lib/settle-tool-calls';
 
 const DEFAULT_PREAMBLE =
   `You are a Strapi CMS assistant. Use your tools to fulfill user requests. When asked to create or update content, use the appropriate tool — do not tell the user you cannot. When performing bulk operations (e.g. publish multiple items), call multiple tools in parallel in a single step rather than one at a time.
@@ -110,7 +111,19 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => {
       // Truncate conversation history while keeping tool call/result pairs intact
       const trimmedMessages = trimMessages(messages, maxMessages);
 
-      const modelMessages = await convertToModelMessages(trimmedMessages);
+      // Close any tool call left open by an interrupted turn, before the SDK
+      // sees it. convertToModelMessages throws MissingToolResultsError on a
+      // call with no result, which makes the whole conversation unusable for
+      // every turn after the one that was cut off.
+      const { messages: safeMessages, settled } = settleDanglingToolCalls(trimmedMessages);
+      if (settled > 0) {
+        strapi.log.warn(
+          `[ai-chat] settled ${settled} unfinished tool call(s) from an interrupted turn ` +
+            'before sending history to the model',
+        );
+      }
+
+      const modelMessages = await convertToModelMessages(safeMessages);
       const tools = createTools(strapi, { adminUserId: options?.adminUserId, enabledToolSources: options?.enabledToolSources, ability: options?.ability });
       const toolsDescription = describeTools(tools);
       let system = composeSystemPrompt(config, toolsDescription, options?.system);
