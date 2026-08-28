@@ -1,5 +1,5 @@
 {
-  "version": "3.1.0",
+  "version": "3.3.0",
   "keywords": [
     "strapi",
     "strapi-plugin",
@@ -50,7 +50,9 @@
     "test:unit:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts tests/e2e/structural.test.ts",
     "test:e2e:live": "E2E_LIVE=1 vitest run --config vitest.e2e.config.ts",
-    "test:mcp-scoping": "node tests/test-mcp-scoping.mjs"
+    "test:mcp-scoping": "node tests/test-mcp-scoping.mjs",
+    "test:browser": "playwright test",
+    "test:browser:headed": "playwright test --headed"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.15",
@@ -65,12 +67,16 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@playwright/test": "^1.62.1",
     "@strapi/sdk-plugin": "^5.4.0",
     "@strapi/strapi": "^5.47.0",
     "@strapi/typescript-utils": "^5.47.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.3",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.5.2",
+    "jsdom": "^25.0.1",
     "prettier": "^3.8.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

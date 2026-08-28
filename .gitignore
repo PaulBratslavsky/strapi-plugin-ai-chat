@@ -136,3 +136,8 @@ yarn-error.log
 ############################
 
 coverage
+
+# Playwright output
+test-results/
+playwright-report/
+.playwright/

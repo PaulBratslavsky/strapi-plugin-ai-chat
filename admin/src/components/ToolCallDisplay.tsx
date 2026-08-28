@@ -228,10 +228,19 @@ export function ToolCallDisplay({ toolCall }: Readonly<{ toolCall: ToolCall }>) 
       <ToolCallHeader onClick={() => setExpanded(!expanded)}>
         <span>{expanded ? '\u25BC' : '\u25B6'}</span>
         <span>Tool: {toolCall.toolName}</span>
-        {toolCall.output === undefined
-          ? <Spinner />
-          : <span style={{ marginLeft: 'auto', fontWeight: 400, opacity: 0.6 }}>completed</span>
-        }
+        {/*
+          Three states, not two. Branching on `output` alone left a failed
+          tool spinning forever: the SDK reports failure as
+          state 'output-error' with errorText and leaves output undefined,
+          so "no output" was being read as "still running".
+        */}
+        {toolCall.state === 'output-error' ? (
+          <FailedLabel>failed</FailedLabel>
+        ) : toolCall.output === undefined ? (
+          <Spinner />
+        ) : (
+          <span style={{ marginLeft: 'auto', fontWeight: 400, opacity: 0.6 }}>completed</span>
+        )}
       </ToolCallHeader>
       {(contentLinks.length > 0 || taskLinks.length > 0) && (
         <ContentLinksRow>
@@ -248,11 +257,15 @@ export function ToolCallDisplay({ toolCall }: Readonly<{ toolCall: ToolCall }>) 
         </ContentLinksRow>
       )}
       {expanded && (
-        <ToolCallContent>
-          {toolCall.output === undefined
-            ? 'Waiting for result...'
-            : JSON.stringify(toolCall.output, null, 2)}
-        </ToolCallContent>
+        toolCall.state === 'output-error' ? (
+          <ErrorText>{toolCall.errorText || 'The tool failed without reporting a reason.'}</ErrorText>
+        ) : (
+          <ToolCallContent>
+            {toolCall.output === undefined
+              ? 'Waiting for result...'
+              : JSON.stringify(toolCall.output, null, 2)}
+          </ToolCallContent>
+        )
       )}
     </ToolCallBox>
   );
