@@ -3,6 +3,29 @@
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
 
+## 3.2.0 - 2026-08-28
+
+Identical concurrent tool calls now share one execution.
+
+A model can issue the same call twice in a single step. Observed with
+`fetchTranscript`: two identical calls for the same video, fired together, each
+independently downloading a 52,000 character transcript. That doubles the load
+on exactly the request most likely to be rate limited, and the second result is
+discarded anyway because it is the same as the first.
+
+Calls are keyed by tool name plus arguments, with argument order ignored, so
+only calls that would produce the same answer are ever joined. Failures are
+shared too, which is correct: the joined caller asked the same question at the
+same moment and the answer was an error.
+
+**Strictly in-flight, never cached.** The entry is dropped the moment the
+promise settles, so a tool asked the same question a second later runs again.
+Caching results across steps would be a different feature with different risks:
+`searchContent` has to see writes that happened since.
+
+The coalescer is created per tool set, which means per request, so concurrent
+users never share an execution.
+
 ## 3.1.0 - 2026-08-28
 
 A failed tool call showed a spinner and "Waiting for result..." forever.

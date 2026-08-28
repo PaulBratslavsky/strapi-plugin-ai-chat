@@ -5,6 +5,7 @@ import type { PluginConfig, PluginInstance } from '../lib/types';
 import { DEFAULT_TOOL_TIMEOUT_MS } from '../lib/types';
 import type { ToolContext } from '../lib/tool-registry';
 import { actionForTool } from '../lib/tool-permissions';
+import { createCallCoalescer } from '../lib/coalesce-calls';
 
 /**
  * Abandon a tool call that never comes back.
@@ -82,6 +83,10 @@ export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet
   const config = strapi.config?.get?.<PluginConfig>('plugin::ai-chat');
   const toolTimeoutMs = config?.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
 
+  // Scoped to this tool set, so it lives exactly as long as one request and
+  // concurrent users never share an execution.
+  const coalescer = createCallCoalescer();
+
   for (const [name, def] of registry.getAll()) {
     // If enabledToolSources is provided, filter plugin tools by prefix
     if (enabledSources) {
@@ -116,11 +121,16 @@ export function createTools(strapi: Core.Strapi, context?: ToolContext): ToolSet
         try {
           // The SDK's own signal is passed in, so stopping the request stops
           // a tool that is already running — not just the steps after it.
-          return await withTimeout(
-            (signal) => def.execute(args, strapi, { ...context, abortSignal: signal }),
-            toolTimeoutMs,
-            name,
-            options?.abortSignal,
+          // Join an identical call already running rather than repeating it.
+          // A model can issue the same call twice in one step, and the second
+          // only doubles load for a result it already has coming.
+          return await coalescer.run(name, args, () =>
+            withTimeout(
+              (signal) => def.execute(args, strapi, { ...context, abortSignal: signal }),
+              toolTimeoutMs,
+              name,
+              options?.abortSignal,
+            ),
           );
         } catch (error) {
           // Rethrown rather than returned: the SDK marks the step a tool
