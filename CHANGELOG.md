@@ -3,6 +3,19 @@
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
 
+## 3.1.0 - 2026-08-28
+
+A failed tool call showed a spinner and "Waiting for result..." forever.
+
+`ToolCallDisplay` decided between pending and complete by looking at `output`
+alone. The SDK reports a failure as `state: 'output-error'` with `errorText` and
+leaves `output` undefined, so "no output" was being read as "still running". The
+turn would finish, the model would explain the failure in its reply, and the
+tool cards above that reply would keep spinning, which looks exactly like a
+hang.
+
+Three states now: running, completed, and failed with its reason shown.
+
 ## 3.0.2 - 2026-08-28
 
 Fixes `MissingToolResultsError`, which made a conversation permanently unusable

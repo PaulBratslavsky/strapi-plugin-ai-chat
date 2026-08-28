@@ -149,6 +149,20 @@ const Spinner = styled.span`
   }
 `;
 
+const FailedLabel = styled.span`
+  margin-left: auto;
+  font-weight: 500;
+  font-size: 12px;
+  color: #d02b20;
+`;
+
+const ErrorText = styled.pre`
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #d02b20;
+`;
+
 const ToolCallContent = styled.pre`
   margin: 0;
   padding: 8px 12px;
