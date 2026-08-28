@@ -3,6 +3,34 @@
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
 
+## 3.0.2 - 2026-08-28
+
+Fixes `MissingToolResultsError`, which made a conversation permanently unusable
+once a turn had been interrupted.
+
+A turn can be cut off mid tool call in several ordinary ways: the reader presses
+Stop, the request is aborted, the step limit lands between a call and its
+result, a stream dies. The part is persisted stuck in `input-streaming` or
+`input-available`, and from then on every message in that conversation failed,
+because the history is replayed on each turn.
+
+The guard for this lived in `trimMessages` and had two holes. It only checked
+the first message of a trimmed window, so a dangling call anywhere else passed;
+and `trimMessages` returns early when the history already fits, so a short
+conversation was never checked at all. That second one is the case that reached
+production.
+
+Unfinished tool calls are now settled before the history is sent, wherever they
+appear and regardless of length. They are settled as an error rather than
+dropped, so the model can see that a tool was started and did not finish, which
+is what it needs in order to retry rather than assume the work was done.
+
+Worth noting for anyone debugging this: the error comes from
+`convertToLanguageModelPrompt` inside `streamText`, not from
+`convertToModelMessages`. Conversion succeeds and produces an assistant
+tool-call with no matching tool-result; the throw happens later, when the prompt
+is built.
+
 ## 3.0.1 - 2026-08-27
 
 Metadata only, no code change. The GitHub repository was renamed to match the
