@@ -3,6 +3,35 @@
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
 
+## 3.3.0 - 2026-08-28
+
+Adds the test layer that was missing, and fixes a bug it immediately found.
+
+**3.1.0 shipped a non-fix.** It claimed to render a failed tool call as failed.
+The styled components landed but the render logic never changed, so the
+published package still showed a spinner and "Waiting for result..." forever on
+a tool that had already failed. The scripted edit that was supposed to replace
+the branch matched nothing and reported success, and nothing in the suite could
+see it because the fault only ever existed on screen. Now actually applied, and
+verified by reverting it and watching the new test go red.
+
+**Component tests.** Six of them over `ToolCallDisplay`, covering the three
+states a tool call can be in and asserting that a failed one never claims to be
+waiting. This is the layer that would have caught the empty chat bubbles, the
+false MODEL MISSING badge, and the stuck spinner, all three of which were
+visible on screen before they were visible in any log.
+
+**Browser tests.** Five Playwright specs against a running admin: the plugin
+mounts at its route, the composer is usable, the context badge reports a real
+number rather than NaN, the old `/ai-sdk` route is gone, and the page loads with
+no console errors. They cover what neither unit nor component tests can, a
+plugin that fails to register or a bundle that was never rebuilt, both of which
+have happened here.
+
+Opt-in through `E2E_ADMIN_EMAIL` and `E2E_ADMIN_PASSWORD`, skipping rather than
+failing without them, so `npm test` stays green where there is no Strapi to talk
+to. Run with `npm run test:browser`.
+
 ## 3.2.0 - 2026-08-28
 
 Identical concurrent tool calls now share one execution.
