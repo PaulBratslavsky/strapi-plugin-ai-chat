@@ -27,6 +27,11 @@ export interface FakeStrapiOptions {
    * Strapi whose query layer is unavailable.
    */
   grantCounts?: number | null;
+  /**
+   * Action ids the provider should already report via `has()`, as if another
+   * plugin registered them in its own bootstrap before this one ran.
+   */
+  preRegisteredActions?: string[];
 }
 
 /**
@@ -43,6 +48,7 @@ export function createFakeStrapi(options: FakeStrapiOptions = {}): {
     hasAiNamespace = true,
     failToolNames = [],
     grantCounts = 1,
+    preRegisteredActions = [],
   } = options;
 
   const captured: Captured = { tools: [], resources: [], actions: [], logs: [] };
@@ -83,6 +89,11 @@ export function createFakeStrapi(options: FakeStrapiOptions = {}): {
       if (uid === 'admin::permission') {
         return {
           actionProvider: {
+            // Mirrors the real provider: `has()` covers both what another
+            // plugin registered before us and what we have registered so far.
+            has: (id: string) =>
+              preRegisteredActions.includes(id) ||
+              captured.actions.some((a) => `plugin::${a.pluginName}.${a.uid}` === id),
             registerMany: async (defs: any[]) => {
               captured.actions.push(...defs);
             },

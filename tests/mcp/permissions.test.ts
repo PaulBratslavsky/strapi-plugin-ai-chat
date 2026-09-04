@@ -90,14 +90,16 @@ describe('registerMcpAdminPermissions', () => {
     }
   });
 
-  it('registers a contributed tool under its own plugin\'s section, not ai-sdk', async () => {
+  it('does not register a contributed tool: the plugin that owns it registers its own', async () => {
     const { strapi, captured } = createFakeStrapi();
     await registerMcpAdminPermissions(strapi, registryWith(contributedTool));
 
+    // A contributing plugin registers `plugin::<its id>.tool.<slug>` in its own
+    // bootstrap. Registering it here too throws `Duplicated item key`, which the
+    // caller catches and then abandons the whole pass, leaving MCP with no tools
+    // at all. Ownership sits with the plugin; this side only consumes.
     const action = captured.actions.find((a: any) => a.uid === 'tool.fetch-transcript');
-    expect(action).toBeDefined();
-    expect(action.pluginName).toBe('ai-sdk-yt-transcripts');
-    expect(action.pluginName).not.toBe('ai-chat');
+    expect(action).toBeUndefined();
   });
 
   it('produces an unambiguous full action id combining plugin section and bare uid', async () => {
@@ -106,12 +108,32 @@ describe('registerMcpAdminPermissions', () => {
 
     const ids = captured.actions.map((a: any) => `plugin::${a.pluginName}.${a.uid}`).sort();
     expect(ids).toEqual(
-      [
-        'plugin::ai-sdk-yt-transcripts.tool.fetch-transcript',
-        'plugin::ai-chat.tool.guide',
-        'plugin::ai-chat.tool.search-content',
-      ].sort(),
+      ['plugin::ai-chat.tool.guide', 'plugin::ai-chat.tool.search-content'].sort(),
     );
+  });
+
+  it('warns, rather than registering, when a contributed tool has no action of its own', async () => {
+    const { strapi, captured } = createFakeStrapi();
+
+    await registerMcpAdminPermissions(strapi, registryWith(contributedTool));
+
+    // Silence would be the bad outcome: Strapi prunes grant rows whose action
+    // no longer exists, so an un-updated plugin loses its permissions with no
+    // trace. Say so in the log instead.
+    const warned = captured.logs.filter((l) => l.level === 'warn').map((l) => l.message).join(' ');
+    expect(warned).toContain('ai-sdk-yt-transcripts');
+    expect(warned).toContain('plugin::ai-sdk-yt-transcripts.tool.fetch-transcript');
+  });
+
+  it('stays quiet when the owning plugin already registered its action', async () => {
+    const { strapi, captured } = createFakeStrapi({
+      preRegisteredActions: ['plugin::ai-sdk-yt-transcripts.tool.fetch-transcript'],
+    });
+
+    await registerMcpAdminPermissions(strapi, registryWith(contributedTool));
+
+    const warned = captured.logs.filter((l) => l.level === 'warn').map((l) => l.message).join(' ');
+    expect(warned).not.toContain('ai-sdk-yt-transcripts');
   });
 });
 

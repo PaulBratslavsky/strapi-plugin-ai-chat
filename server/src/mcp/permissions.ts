@@ -14,15 +14,26 @@
 // showed four checkboxes in the admin grid that didn't correspond to any
 // tool the user could see.
 //
-// Each action is registered under `section: 'plugins'` with `pluginName` set
-// to the plugin that OWNS the tool — not always ai-sdk. Built-in tools use
-// `pluginName: 'ai-chat'`; a tool contributed by another plugin (namespaced
-// `<source>__<toolName>` during discovery, see bootstrap.ts) uses that
-// source as its `pluginName`, so its permission shows up in that plugin's
-// own section of the admin permissions screen — e.g.
-// `plugin::ai-sdk-yt-transcripts.tool.fetch-transcript`, not
-// `plugin::ai-chat.tool.ai-sdk-yt-transcripts__fetch-transcript`. This keeps
-// the ai-sdk section lean: it lists only the tools it actually owns.
+// We register only the tools we own. Every action lands under
+// `section: 'plugins'` with `pluginName: 'ai-chat'`.
+//
+// A tool contributed by another plugin (namespaced `<source>__<toolName>`
+// during discovery, see bootstrap.ts) is that plugin's to register, in its own
+// bootstrap, under its own id — e.g.
+// `plugin::youtube-transcripts.tool.fetch-transcript`. That is the same id
+// this file used to generate, so enforcement and existing grants are
+// unaffected; what changes is who declares it.
+//
+// The reason it moved: a contributing plugin has to work installed on its own.
+// While this file declared those actions, a plugin without ai-chat alongside it
+// had nothing in Settings > Roles at all, and even with ai-chat the actions
+// only existed when the MCP server happened to be enabled, since this whole
+// pass sits behind that check.
+//
+// Both sides registering is not an option: the admin action provider is built
+// with the default `throwOnDuplicates`, so the second one throws
+// `Duplicated item key`, and our caller catches that and abandons the rest of
+// the pass — leaving the MCP server with no tools at all.
 import type { Core } from '@strapi/strapi';
 import type { ToolRegistry } from '../lib/tool-registry';
 import { toActionSlug, toDisplayName } from './naming';
@@ -70,9 +81,17 @@ export function buildMcpActionDefs(registry: ToolRegistry): McpActionDef[] {
   const defs: McpActionDef[] = [TOOL_GUIDE_ACTION_DEF];
 
   for (const [name] of registry.getPublic()) {
+    // Only our own tools. A tool contributed by another plugin is that
+    // plugin's to register, in its own bootstrap, so it works standalone
+    // without this one installed. Registering it here as well would throw
+    // `Duplicated item key` (the admin action provider is built with the
+    // default throwOnDuplicates), and the caller catches that and abandons
+    // the rest of the pass, leaving the MCP server with no tools at all.
+    if (pluginNameForTool(name) !== AI_SDK_PLUGIN_NAME) continue;
+
     defs.push({
       section: 'plugins',
-      pluginName: pluginNameForTool(name),
+      pluginName: AI_SDK_PLUGIN_NAME,
       subCategory: SUBCATEGORY,
       uid: `tool.${toActionSlug(name)}`,
       displayName: toDisplayName(name),
@@ -80,6 +99,41 @@ export function buildMcpActionDefs(registry: ToolRegistry): McpActionDef[] {
   }
 
   return defs;
+}
+
+/**
+ * Say something when a contributed tool has no action registered by anyone.
+ *
+ * We deliberately no longer register these, so a plugin that has not adopted
+ * the convention ends up with tools nobody gated. That matters more than it
+ * sounds: Strapi's `cleanPermissionsInDatabase` deletes grant rows whose
+ * action id no longer exists, so the symptom is silently revoked access on
+ * the next boot rather than an error. Advisory only.
+ */
+function warnAboutUnownedTools(strapi: Core.Strapi, registry: ToolRegistry): void {
+  const provider = strapi.service('admin::permission').actionProvider;
+  const orphans = new Map<string, string[]>();
+
+  for (const [name] of registry.getPublic()) {
+    const owner = pluginNameForTool(name);
+    if (owner === AI_SDK_PLUGIN_NAME) continue;
+
+    const id = actionForTool(name);
+    if (provider.has?.(id)) continue;
+
+    const list = orphans.get(owner) ?? [];
+    list.push(id);
+    orphans.set(owner, list);
+  }
+
+  for (const [owner, ids] of orphans) {
+    strapi.log.warn(
+      `[ai-chat:mcp] ${ids.length} tool(s) contributed by \`${owner}\` have no registered ` +
+        `permission: ${ids.join(', ')}. That plugin should register them in its own bootstrap ` +
+        `so it also works without ai-chat installed. Until it does, those tools cannot be ` +
+        `granted in Settings > Roles, and any existing grants are pruned at boot.`,
+    );
+  }
 }
 
 /**
@@ -139,6 +193,10 @@ export async function registerMcpAdminPermissions(
   const defs = buildMcpActionDefs(registry);
   await strapi.service('admin::permission').actionProvider.registerMany(defs);
   strapi.log.info(`[ai-chat:mcp] Registered ${defs.length} custom admin permission(s).`);
+
+  // Contributed tools are registered by the plugins that own them; flag any
+  // that nobody registered rather than letting their grants disappear quietly.
+  warnAboutUnownedTools(strapi, registry);
 
   await warnIfNothingGranted(
     strapi,
