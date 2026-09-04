@@ -28,9 +28,23 @@ Silence would be the dangerous outcome: Strapi's `cleanPermissionsInDatabase`
 deletes grant rows whose action id no longer exists, so an un-updated plugin
 would lose its permissions on the next boot with no trace.
 
-Upgrade note: pair this with strapi-plugin-youtube-transcripts 2.5.0 or later.
-An older version of that plugin does not register its own actions, and this
-release stops registering them for it. The log names any tool in that state.
+Upgrade order matters. Deploy this release BEFORE
+strapi-plugin-youtube-transcripts 2.5.0, never after.
+
+  1. strapi-plugin-ai-chat 3.4.0      (stops registering contributed tools)
+  2. strapi-plugin-youtube-transcripts 2.5.0  (starts registering its own)
+
+Both orders end up correct, but the wrong one has a bad intermediate state:
+transcripts 2.5.0 running against ai-chat 3.3.0 means both declare
+`plugin::youtube-transcripts.tool.*`. If transcripts registers first, this
+plugin's `registerMany` throws `Duplicated item key`, the surrounding catch
+swallows it, and `registerToolsOnMcp` never runs — the MCP server serves no
+tools at all, with a single log line to show for it. Deploying this release
+first has no such window, because it simply stops claiming those ids.
+
+An older transcripts alongside this release is safe: it does not register its
+own actions, so nothing collides. Its tools are then unowned, and the log names
+them, but nothing breaks.
 
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
