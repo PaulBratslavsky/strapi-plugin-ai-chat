@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.4.0 - 2026-09-04
+
+Tool permissions now belong to the plugin that owns the tool.
+
+This plugin used to register an admin action for every tool in the registry,
+including tools contributed by other plugins. That made a contributing plugin
+depend on this one for its own permissions: installed on its own, it had
+nothing in Settings > Roles at all. It also meant those permissions only
+existed when the MCP server was enabled, since the whole registration pass sits
+behind that check.
+
+It now registers only its own built-in tools and the tool guide. A contributing
+plugin registers `plugin::<its id>.tool.<slug>` in its own bootstrap, which is
+the same id this plugin was generating, so nothing moves and no grant changes.
+Enforcement is unchanged: the action id a tool is gated behind is still derived
+the same way.
+
+Registering both sides would have been worse than it sounds. Strapi's admin
+action provider is built with the default `throwOnDuplicates`, so the second
+registration throws `Duplicated item key`, and the caller catches that and
+abandons the rest of the pass, leaving the MCP server with no tools at all and
+only a log line to show for it.
+
+A contributed tool that nobody registered is now called out by name in the log.
+Silence would be the dangerous outcome: Strapi's `cleanPermissionsInDatabase`
+deletes grant rows whose action id no longer exists, so an un-updated plugin
+would lose its permissions on the next boot with no trace.
+
+Upgrade note: pair this with strapi-plugin-youtube-transcripts 2.5.0 or later.
+An older version of that plugin does not register its own actions, and this
+release stops registering them for it. The log names any tool in that state.
+
 Entries from 1.2.0 onward describe what changed and why. Earlier entries are
 generated file listings kept for the record.
 
