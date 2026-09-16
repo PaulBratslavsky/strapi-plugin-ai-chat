@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.5.0 - 2026-09-16
+
+Tools contributed by other plugins are no longer registered on MCP here.
+
+The plugin still reads them from each plugin's `ai-tools` service and offers
+them in the admin chat, gated as before. Putting them on `/mcp` is now the
+owning plugin's job, the same move 3.4.0 made for their permissions. Doing it
+here tied a plugin's MCP presence to this one being installed: remove ai-chat
+and the tools were gone from every MCP client, though nothing about them
+depended on a chat.
+
+Boot now says what it left, per plugin:
+`5 tool(s) from youtube-transcripts are in the chat but left to
+youtube-transcripts to register on MCP: ...`. Strapi's MCP service cannot report
+which tools are registered, so this cannot check the owner did its part; the
+line is where a plugin that never registers its own tools shows up.
+
+Upgrade together with strapi-plugin-youtube-transcripts 2.6.0, which registers
+its own. On its own this release takes the transcript tools off MCP until that
+plugin is upgraded. The reverse order is safe, only noisy: 2.6.0 next to an
+older ai-chat registers first, and the older ai-chat logs a "Skipped tool"
+warning for each duplicate.
+
+A plugin written against 3.4.0 or earlier that does not register its own tools
+keeps working in the chat but is no longer on MCP.
+`strapi-plugin-ai-sdk-yt-embeddings` 0.3.0 is one; it is not in use.
+
+The contract doc now says so: a contributing plugin registers its permissions
+and its MCP tools in its own `bootstrap()`, with youtube-transcripts as the
+reference.
+
 ## 3.4.0 - 2026-09-04
 
 Tool permissions now belong to the plugin that owns the tool.

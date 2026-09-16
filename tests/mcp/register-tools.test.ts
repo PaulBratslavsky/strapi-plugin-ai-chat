@@ -33,7 +33,37 @@ const internalTool = {
   internal: true,
 };
 
+// A tool another plugin contributed through its `ai-tools` service. Discovery
+// namespaces it as `<plugin>__<tool>`.
+const contributedTool = {
+  name: 'youtube-transcripts__fetchTranscript',
+  description: 'Fetch a transcript',
+  schema: z.object({ videoId: z.string() }),
+  execute: async () => ({ ok: true }),
+};
+
 describe('registerToolsOnMcp', () => {
+  it('leaves contributed tools to the plugin that owns them', () => {
+    // The owner registers its own tools on MCP (youtube-transcripts 2.6.0 does).
+    // Registering them here as well made them vanish from MCP whenever this
+    // plugin was absent, and collides by name with the owner's registration.
+    const { strapi, captured } = createFakeStrapi();
+    const count = registerToolsOnMcp(strapi, registryWith(readTool, contributedTool));
+
+    expect(count).toBe(1);
+    expect(captured.tools.map((t) => t.name)).toEqual(['search_content']);
+  });
+
+  it('says which contributed tools it left to their owners', () => {
+    const { strapi, captured } = createFakeStrapi();
+    registerToolsOnMcp(strapi, registryWith(readTool, contributedTool));
+
+    const note = captured.logs.find((l) => l.message.includes('youtube-transcripts'));
+    expect(note).toBeDefined();
+    expect(note?.level).not.toBe('warn');
+    expect(note?.level).not.toBe('error');
+  });
+
   it('registers public tools and skips internal ones', () => {
     const { strapi, captured } = createFakeStrapi();
     const count = registerToolsOnMcp(strapi, registryWith(readTool, writeTool, internalTool));

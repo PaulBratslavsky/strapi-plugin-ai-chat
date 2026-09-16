@@ -18,7 +18,7 @@ Bring your own model. Anthropic, or anything OpenAI-compatible you run yourself.
 - **Bring your own model.** Anthropic, or open-source models you run yourself. Nothing assumes a vendor.
 - **Runs fully local.** Qwen, Gemma, Llama and friends via Ollama, vLLM or llama-swap. Your content never leaves the machine. Read [Choosing a model](#choosing-a-model) first, since model size decides whether tool calling actually works.
 - **Per-tool permissions.** Grant `searchContent` without granting `sendEmail`, per role and per token.
-- **MCP built in.** Registers its tools onto Strapi's official `/mcp` endpoint for Claude Desktop and other clients.
+- **MCP built in.** Registers its own tools onto Strapi's official `/mcp` endpoint for Claude Desktop and other clients. Tools from other plugins are registered by those plugins.
 - **Extensible.** Other plugins contribute tools through a small service contract.
 - **Guardrails.** Prompt-injection screening on chat input.
 - **Shows you the budget.** A context badge reports how much of the model's window the conversation is using, which is the failure that otherwise looks like broken tool calling.
@@ -348,7 +348,7 @@ export default () => ({
 });
 ```
 
-The tool's permission appears under your plugin's own section, and starts ungranted.
+Your plugin registers each tool's permission and puts the tool on `/mcp` itself, in its own `bootstrap()`. This plugin only picks the tools up for the chat, so they reach MCP even when it is not installed. The permission appears under your plugin's own section, and starts ungranted. [`strapi-plugin-youtube-transcripts`](https://github.com/PaulBratslavsky/strapi-plugin-youtube-transcripts) is a working example.
 
 > Full contract, namespacing rules and Zod requirements: [docs/plugin-contract.md](./docs/plugin-contract.md)
 

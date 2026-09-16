@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { ToolRegistry } from '../lib/tool-registry';
 import { toSnakeCase, toTitle } from './naming';
 import { actionForTool } from './permissions';
+import { AI_SDK_PLUGIN_NAME, pluginNameForTool } from '../lib/tool-permissions';
 import { guardSize } from './size-guard';
 
 /**
@@ -13,7 +14,8 @@ import { guardSize } from './size-guard';
 export const LOOSE_OUTPUT = z.object({}).catchall(z.any());
 
 /**
- * Register every public registry tool on the official Strapi MCP server.
+ * Register this plugin's own public tools on the official Strapi MCP server.
+ * Tools contributed by other plugins are skipped: their owners register them.
  *
  * Tool schemas are Zod 4 and are handed to `resolveInputSchema` untouched —
  * the MCP SDK detects Zod 4 by duck-typing and converts with its own bundled
@@ -25,8 +27,20 @@ export const LOOSE_OUTPUT = z.object({}).catchall(z.any());
 export function registerToolsOnMcp(strapi: Core.Strapi, registry: ToolRegistry): number {
   const mcp = strapi.ai!.mcp;
   let count = 0;
+  const leftToOwners = new Map<string, string[]>();
 
   for (const [name, def] of registry.getPublic()) {
+    // A tool another plugin contributed is that plugin's to put on MCP. This
+    // plugin only reads it from the `ai-tools` service for the chat panel.
+    // Registering it here too made the tool disappear from MCP whenever this
+    // plugin was not installed, and collides by name with the owner's own
+    // registration.
+    const owner = pluginNameForTool(name);
+    if (owner !== AI_SDK_PLUGIN_NAME) {
+      leftToOwners.set(owner, [...(leftToOwners.get(owner) ?? []), name]);
+      continue;
+    }
+
     const mcpName = toSnakeCase(name);
 
     // The official server's capability registry throws synchronously on
@@ -77,6 +91,17 @@ export function registerToolsOnMcp(strapi: Core.Strapi, registry: ToolRegistry):
         `[ai-chat:mcp] Skipped tool "${name}" (mcp name "${mcpName}") — registration failed: ${message}`,
       );
     }
+  }
+
+  // Strapi's MCP service cannot say which tools are registered, so this cannot
+  // check that the owner did its part. Naming what was left is the next best
+  // thing: a plugin written for ai-chat 3.4.0 or earlier does not register its
+  // own tools, and this line is where that gap shows up.
+  for (const [owner, names] of leftToOwners) {
+    strapi.log.info(
+      `[ai-chat:mcp] ${names.length} tool(s) from \`${owner}\` are in the chat but left to ` +
+        `\`${owner}\` to register on MCP: ${names.map(toSnakeCase).join(', ')}`,
+    );
   }
 
   return count;
