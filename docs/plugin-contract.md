@@ -288,16 +288,20 @@ deliberate:
 
 | Context | Form | Example |
 |---|---|---|
-| Registry | camelCase, `__`-prefixed | `ai-sdk-yt-transcripts__fetchTranscript` |
-| MCP tool name | snake_case | `ai_chat_yt_transcripts__fetch_transcript` |
-| Admin action | hyphens, prefix stripped | `plugin::ai-sdk-yt-transcripts.tool.fetch-transcript` |
+| Registry | camelCase, `__`-prefixed | `youtube-transcripts__fetchTranscript` |
+| MCP tool name | snake_case | `youtube_transcripts__fetch_transcript` |
+| Admin action | hyphens, prefix stripped | `plugin::youtube-transcripts.tool.fetch-transcript` |
+
+Since 3.5.0 the MCP tool name is chosen and registered by **your** plugin, not
+this one. Use the same form, `<plugin id with underscores>__<snake_case name>`,
+so a client that already calls the tool keeps working when you take it over.
 
 MCP names are snake_case to match Strapi's own built-in tools. Action slugs use
 hyphens because Strapi's admin action uid validator accepts only lowercase
 letters, dots and hyphens — no underscores. The source prefix is stripped from
 the action because the plugin section already identifies the source; repeating
 it would give you
-`plugin::ai-chat.tool.ai-sdk-yt-transcripts__fetch-transcript`.
+`plugin::ai-chat.tool.youtube-transcripts__fetch-transcript`.
 
 **Name collisions are skipped, not overwritten.** Two plugins can both expose a
 `search` tool without clashing, since the prefix disambiguates them. A duplicate
@@ -339,11 +343,19 @@ Two layers, so one broken plugin cannot take down the others or the host.
 throw is caught and logged as `Tool discovery failed for <plugin>`, and the scan
 continues to the next plugin. Malformed definitions are skipped individually.
 
-**At MCP registration.** Each `registerTool()` call is individually wrapped. The
-capability registry throws synchronously on conflicts — a duplicate name across
-plugins, a missing auth policy — and one bad tool must not take down the
-registration pass or Strapi's boot. Failures skip and continue with a warning
-naming the tool.
+**At MCP registration.** This plugin registers only its own tools on MCP.
+Contributed tools are left to their owners, and boot logs which ones it left:
+`N tool(s) from <plugin> are in the chat but left to <plugin> to register on
+MCP`. Strapi's MCP service cannot report what is registered, so that line is
+where a plugin that never registers its tools shows up.
+
+Each of this plugin's `registerTool()` calls is individually wrapped. The
+capability registry throws synchronously on conflicts (a duplicate name, a
+missing auth policy), and one bad tool must not take down the registration pass
+or Strapi's boot. Failures skip and continue with a warning naming the tool.
+Do the same in your plugin: an older ai-chat (3.4.0 and earlier) still
+registers contributed tools, so your registration and its can race for the
+same name, and whichever runs second must stand down quietly.
 
 Beyond both, the whole MCP branch of `bootstrap()` sits in an outer try/catch,
 so even a host shape change in `strapi.ai` degrades to "MCP tools unavailable"
@@ -397,8 +409,19 @@ your-plugin/
   package.json
 ```
 
-You do **not** need an MCP server, a transport, routes, controllers, or
-permission registration. All of that is handled for you.
+You do **not** need an MCP server, a transport, routes or controllers. Strapi
+serves `/mcp`, and this plugin runs the chat.
+
+You **do** own two things about your tools, in your own `bootstrap()`:
+
+- **Their permission actions** (since 3.4.0), registered with the admin
+  `actionProvider`, skipping any id that already exists.
+- **Their place on MCP** (since 3.5.0), with `strapi.ai.mcp.registerTool()`,
+  gated on those actions. Without this your tools are in the chat but not on
+  `/mcp`.
+
+`strapi-plugin-youtube-transcripts` does both and is the reference:
+`server/src/lib/tool-permissions.ts` and `server/src/lib/register-mcp-tools.ts`.
 
 You **do** need the service registered under exactly the key `ai-tools`:
 
